@@ -9,6 +9,8 @@ import { JevService } from './services/jev.js';
 import { Engine } from './core/engine.js';
 import { ShortcutManager } from './shortcuts.js';
 import { STOP_SHORTCUT } from './core/shortcuts.js';
+import { createReleaseWatcher } from './key-release.js';
+import { createRequire } from 'node:module';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const rendererFile = path.join(root, 'renderer/index.html');
@@ -37,7 +39,9 @@ browser = new BrowserController({ directory: app.getPath('userData'), headless: 
   onChange: () => { browser.tabs().then(tabs => send('tabs', tabs)).catch(() => {}); } });
 const jev = new JevService(() => settings.data);
 engine = new Engine({ browser, google, jev, settings: () => settings.data });
-const shortcuts = new ShortcutManager(globalShortcut, action => send('shortcut-action', action));
+const releaseModule = app.isPackaged ? path.join(process.resourcesPath, 'native/key-release.node') : path.join(root, '../build/native/key-release.node');
+const watchRelease = createReleaseWatcher(createRequire(import.meta.url)(releaseModule));
+const shortcuts = new ShortcutManager(globalShortcut, action => send('shortcut-action', action), watchRelease);
 let shortcutWarning = '';
 for (const event of ['state', 'narration', 'stop', 'notice']) engine.on(event, data => send(event, data));
 
@@ -86,6 +90,11 @@ handle('start-browser', practice => { if (typeof practice !== 'boolean') throw n
 handle('show-browser', () => browser.show());
 handle('command', text => { if (typeof text !== 'string') throw new Error('Enter a spoken or typed command.'); return engine.input(text); });
 const allowed = new Set(['stop', 'select', 'open_item', 'open_current', 'confirm', 'choose', 'switch_tab', 'next', 'previous', 'repeat', 'read_results', 'read_headings', 'read_page', 'read_links', 'read_sinhala', 'read_original', 'where', 'help', 'back', 'forward', 'reload', 'new_tab', 'close_tab', 'next_tab', 'previous_tab', 'scroll_down', 'scroll_up', 'play', 'pause']);
+allowed.add('read_first_five');
+handle('continue-reading', (epoch, index) => {
+  if (!Number.isSafeInteger(epoch) || !Number.isInteger(index) || index < 0 || index > 4) throw new Error('That reading request is no longer available.');
+  return engine.continueReading(epoch, index);
+});
 handle('control', (action, index) => {
   if (!allowed.has(action) || (index !== undefined && (!Number.isInteger(index) || index < 0 || index > 10000))) throw new Error('That control is not available.');
   return engine.control(action, index);
@@ -127,12 +136,15 @@ shortcutWarning = shortcuts.start(settings.data.shortcuts);
 if (!globalShortcut.register(STOP_SHORTCUT, () => { engine.stop(); send('cancel-recording'); })) {
   shortcutWarning += ' The stop shortcut is unavailable. Escape still stops reading inside Svara.';
 }
-window.webContents.on('render-process-gone', () => shortcuts.setEditing(false));
+watchRelease.refresh();
+window.webContents.on('render-process-gone', () => { shortcuts.cancelHold(); shortcuts.setEditing(false); });
 await window.loadFile(rendererFile);
 app.on('activate', () => { if (window && !window.isDestroyed()) window.show(); });
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', event => {
   globalShortcut.unregisterAll();
+  shortcuts.cancelHold();
+  watchRelease.close();
   if (!quitting) { event.preventDefault(); quitting = true; engine.stop(); browser.close().finally(() => app.quit()); }
 });
 }).catch(error => {

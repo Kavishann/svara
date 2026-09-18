@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('svara', {
   chooseCredentials: () => call('credentials-file'), checkConnections: () => call('connections-check'),
   startBrowser: practice => call('start-browser', practice), showBrowser: () => call('show-browser'),
   command: text => call('command', text), control: (action, index) => call('control', action, index),
+  continueReading: (epoch, index) => call('continue-reading', epoch, index),
   openSite: site => call('open-site', site), microphonePermission: () => call('microphone-permission'),
   audio: data => call('audio', data), synthesize: request => call('synthesize', request), voiceTest: () => call('voice-test'),
   onState: cb => subscribe('state', cb), onTabs: cb => subscribe('tabs', cb), onNarration: cb => subscribe('narration', cb),

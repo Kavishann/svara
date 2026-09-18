@@ -28,24 +28,24 @@ test('shortcut validation supports single keys and rejects duplicate or reserved
 });
 
 test('conflicting shortcut changes preserve previous registrations and do not save', async () => {
-  const api = platform(), actions = [], manager = new ShortcutManager(api, action => actions.push(action));
+  const api = platform(), actions = [], manager = new ShortcutManager(api, action => actions.push(action), () => () => {});
   manager.start(config({ speak: 'F8', next: 'F7' })); api.blocked.add('F9'); let saved = false;
   await assert.rejects(manager.save(config({ speak: 'F10', open: 'F9' }), async () => { saved = true; }), /unavailable/);
   assert.equal(saved, false); assert.equal(api.keys.has('F10'), false);
-  api.press('F8'); api.press('F7'); assert.deepEqual(actions, ['speak', 'next']);
+  api.press('F8'); api.press('F7'); assert.deepEqual(actions, ['speak-start', 'next']);
 });
 
 test('disk failures roll back new keys and editing never activates a browser action', async () => {
-  const api = platform(), actions = [], manager = new ShortcutManager(api, action => actions.push(action));
+  const api = platform(), actions = [], manager = new ShortcutManager(api, action => actions.push(action), () => () => {});
   manager.start(config({ speak: 'F8' })); manager.setEditing(true);
   api.press('F8'); assert.deepEqual(actions, []);
   await assert.rejects(manager.save(config({ speak: 'F9' }), async () => { api.press('F9'); throw new Error('disk full'); }), /disk full/);
   assert.equal(api.suspended, true); assert.equal(api.keys.has('F9'), false);
-  manager.setEditing(false); api.press('F8'); assert.deepEqual(actions, ['speak']);
+  manager.setEditing(false); api.press('F8'); assert.deepEqual(actions, ['speak-start']);
 });
 
 test('swapping keys changes their actions and disabling frees keys for typing', async () => {
-  const api = platform(), actions = [], manager = new ShortcutManager(api, action => actions.push(action));
+  const api = platform(), actions = [], manager = new ShortcutManager(api, action => actions.push(action), () => () => {});
   manager.start(config({ previous: 'F6', next: 'F7' }));
   await manager.save(config({ previous: 'F7', next: 'F6' }), async () => {});
   api.press('F6'); api.press('F7'); assert.deepEqual(actions, ['next', 'previous']);

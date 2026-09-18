@@ -46,17 +46,20 @@ API keys are encrypted with Electron `safeStorage` backed by macOS secure storag
 
 | Action | Control |
 | --- | --- |
-| Start/finish recording | Your speaking shortcut (initially **Control + Option + Space**), or Start speaking |
+| Record a command | Hold your speaking shortcut (initially **Control + Option + Space**) or the **Hold to speak** button. Speak after the tone; release to send. |
 | Stop reading/cancel a recording | **Escape** in Svara; **Control + Option + Escape** anywhere |
 | Read a section | Results, Headings, Page text, or Links |
 | Navigate reading items | Previous, Next, Read again, or numbered list buttons |
 | Activate selected link | Open this item |
 | Translate selected passage | Read this in Sinhala; Read the original switches back |
+| Read five options | **Read first 5**, or say “read first five” / “මුල් පහ කියවන්න”. Reads from item 1 to at most item 5, then stops, even if continuous reading is enabled. |
 | Continue automatically | Keep reading the next item |
 | Change speaking speed | Speed slider; implemented in audio playback |
 | Configure keyboard shortcuts | **Keyboard shortcuts** in the sidebar, or **Command + K** in Svara |
 
 In **Keyboard shortcuts**, choose a key and optional extra keys for speaking, previous, next, and opening the current item. **Use single keys · F6–F9** selects F8 for speaking, F6 for previous, F7 for next, and F9 for opening. Choose **Save and use shortcuts** to apply the choices immediately and return Home. Your choices are saved on this Mac and restored at startup; existing API connections are preserved. Home and spoken Help show the saved keys.
+
+Releasing the speaking key (or a required modifier) finishes recording and processes the command automatically. Escape cancels without sending. A release before the microphone is ready cancels that attempt; hold again after granting microphone permission. Each recording is limited to 45 seconds.
 
 Custom shortcuts work across applications while Svara runs. Single letters, arrows, Space, and Enter therefore also intercept normal typing; switch custom shortcuts off in the editor when needed. Function keys may require Fn depending on your Mac keyboard settings. Keys are paused while the editor is open so you can use its controls. Command + K opens the editor from Svara, and Command + Q remains available to quit. Duplicate or unavailable keys cannot be saved, and a failed change keeps the previous shortcuts. The Open shortcut uses the currently selected reading item and retains normal target verification and confirmation.
 
@@ -107,3 +110,5 @@ During the initial build, a live anonymous YouTube search also successfully prod
 - [Google Cloud Gemini-TTS setup, permissions, and languages](https://docs.cloud.google.com/text-to-speech/docs/gemini-tts)
 
 See `THIRD_PARTY_NOTICES.md` for reference attribution.
+
+Hold-to-talk uses a bundled Node-API module built with Xcode Command Line Tools by `npm start` and the Mac build scripts. It pairs the Carbon press and release events for Electron’s registered shortcut ID. It does not poll ordinary keyboard state, capture typed text, or install a global keyboard event tap. The release handler is refreshed after shortcut registration or editing changes. The native regression test uses events inside its own process; it does not generate system keyboard input.

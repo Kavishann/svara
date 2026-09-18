@@ -1,7 +1,7 @@
 {
   "name": "svara-browser",
   "productName": "Svara",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "description": "A voice-guided browser for Sinhala speakers",
   "private": true,
   "type": "module",
@@ -13,7 +13,12 @@
     "check": "node scripts/check.js",
     "build:mac": "electron-builder --mac dir",
     "dist:mac": "electron-builder --mac dmg",
-    "browser:install": "playwright install chromium"
+    "browser:install": "playwright install chromium",
+    "build:native": "node scripts/build-native.js",
+    "prestart": "npm run build:native",
+    "pretest:ui": "npm run build:native",
+    "prebuild:mac": "npm run build:native",
+    "predist:mac": "npm run build:native"
   },
   "dependencies": {
     "@google-cloud/speech": "^8.1.0",
@@ -44,6 +49,10 @@
       {
         "from": "src/practice",
         "to": "practice"
+      },
+      {
+        "from": "build/native",
+        "to": "native"
       }
     ],
     "mac": {

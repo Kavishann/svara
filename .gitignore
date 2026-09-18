@@ -9,3 +9,5 @@ artifacts/
 credentials*.json
 service-account*.json
 coverage/
+build/native/
+build/native-tests/

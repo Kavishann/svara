@@ -10,6 +10,7 @@ export const ACTIONS = {
   close_tab: 'Close the current tab.', next_tab: 'Switch to the next tab.', previous_tab: 'Switch to the previous tab.',
   scroll_down: 'Scroll down one screen.', scroll_up: 'Scroll up one screen.',
   read_results: 'Read search results, starting with the first result.',
+  read_first_five: 'Read the first five items in the current reading list, one after another, then stop.',
   read_headings: 'Read headings on the current page.', read_page: 'Read the main article or page text.',
   read_links: 'Read links on the current page.', next: 'Read the next item.', previous: 'Read the previous item.',
   repeat: 'Read the current item again.', read_sinhala: 'Translate and read the current item in Sinhala.',
@@ -91,6 +92,9 @@ const local = new Map(Object.entries({
   'new tab': 'new_tab', 'open a new tab': 'new_tab', 'අලුත් ටැබ් එකක්': 'new_tab',
   'close tab': 'close_tab', 'close this tab': 'close_tab', 'next tab': 'next_tab', 'previous tab': 'previous_tab',
   'read results': 'read_results', 'ප්‍රතිඵල කියවන්න': 'read_results', 'read headings': 'read_headings',
+  'read first five': 'read_first_five', 'read first 5': 'read_first_five', 'read the first five': 'read_first_five',
+  'read first five options': 'read_first_five', 'read first five results': 'read_first_five',
+  'මුල් පහ කියවන්න': 'read_first_five', 'පළමු පහ කියවන්න': 'read_first_five', 'පළමු ප්‍රතිඵල පහ කියවන්න': 'read_first_five',
   'read page': 'read_page', 'read links': 'read_links', 'scroll down': 'scroll_down', 'scroll up': 'scroll_up',
   'play': 'play', 'pause': 'pause', 'refresh': 'reload'
 }));

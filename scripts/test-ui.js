@@ -4,6 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import assert from 'node:assert/strict';
 import AxeBuilder from '@axe-core/playwright';
+import { testInteractions } from './test-interactions.js';
 const directory = await mkdtemp(path.join(os.tmpdir(), 'svara-ui-'));
 const env = { ...process.env, SVARA_TEST_USER_DATA: directory, SVARA_TEST_HEADLESS: '1' };
 delete env.ELECTRON_RUN_AS_NODE;
@@ -12,6 +13,7 @@ const app = await electron.launch({ ...(packaged ? { executablePath: packaged } 
 const errors = [];
 try {
   const window = await app.firstWindow();
+  window.setDefaultTimeout(10000);
   window.on('pageerror', error => errors.push(error.message));
   await window.waitForSelector('#talk');
   await window.waitForFunction(() => document.querySelector('#status-message').textContent.includes('Your browser'));
@@ -63,7 +65,7 @@ try {
   await window.waitForFunction(() => document.querySelector('#position').textContent === '2 / 5');
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('shortcut-action', 'previous'));
   await window.waitForFunction(() => document.querySelector('#position').textContent === '1 / 5');
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('shortcut-action', 'speak'));
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('shortcut-action', 'speak-start'));
   await window.waitForFunction(() => document.querySelector('#notice').textContent.includes('Practice mode uses typed commands'));
   await window.reload();
   await window.waitForFunction(() => document.querySelector('.hero [data-shortcut-hint="speak"]').textContent === 'F8');
@@ -80,6 +82,13 @@ try {
   await window.waitForFunction(() => document.querySelector('#position').textContent === '2 / 5');
   await window.keyboard.press('Escape');
   await window.waitForFunction(() => /Stopped|නැවැත්තුවා/.test(document.querySelector('#status-message').textContent));
+  await testInteractions(app, window);
   assert.deepEqual(errors, []);
   console.log('Desktop UI passed: home, practice, reader, settings, shortcut editing, conflicts, native registration, actions, reload persistence, disabling, Escape, and accessibility. Screenshots in artifacts/.');
+} catch (error) {
+  const window = await app.firstWindow();
+  console.error(await window.evaluate(() => ({ notice: document.querySelector('#notice').textContent, status: document.querySelector('#status-message').textContent, position: document.querySelector('#position').textContent, recording: document.querySelector('#talk-label').textContent })));
+  console.error(await window.evaluate(() => window.svaraFakeMedia));
+  await window.screenshot({ path: 'artifacts/test-failure.png', fullPage: true });
+  throw error;
 } finally { await app.close(); await rm(directory, { recursive: true, force: true }); }

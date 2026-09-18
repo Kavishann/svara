@@ -252,3 +252,6 @@ main{margin-left:184px;width:calc(100% - 184px)}
 .shortcut-card .shortcut-status.failed{background:#fff0df;color:#79511f}
 .shortcut-card select:disabled{opacity:.6}
 @media(max-width:1080px){.shortcut-row{grid-template-columns:minmax(160px,1.2fr) minmax(100px,.7fr) minmax(150px,1fr);gap:12px}}
+
+.reading-card #first-five-help{font-size:12px;line-height:1.5;margin:8px 0 12px;max-height:none}
+#talk{touch-action:none;user-select:none}

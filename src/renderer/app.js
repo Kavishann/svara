@@ -1,10 +1,11 @@
 import { splitForSpeech, speechLocale } from './audio.js';
 import { DEFAULT_SHORTCUTS, shortcutLabel } from '../core/shortcuts.js';
 import { createShortcutEditor } from './shortcuts.js';
+import { HoldRecorder } from './recording.js';
 const api = window.svara;
 const $ = selector => document.querySelector(selector);
-let state, settings, currentView = 'home', tabs = [], recorder = null, stream = null, recordingTimer, discarded = false;
-let recordingPending = false, audio = null, audioUrl = '', playback = 0, activeResolve = null, noticeTimer;
+let state, settings, currentView = 'home', tabs = [];
+let audio = null, audioUrl = '', playback = 0, activeResolve = null, noticeTimer;
 const shortcutEditor = createShortcutEditor({ api, saved: fillSettings, activate: () => view('home'), notice });
 
 function notice(text, error = true) {
@@ -64,6 +65,7 @@ function render(next) {
   $('#current-meta').textContent = item?.meta || '';
   $('#position').textContent = item ? `${next.reader.index + 1} / ${next.reader.items.length}` : '—';
   $('#open-item').disabled = !item?.targetId;
+  $('#read-first-five').disabled = !next.reader.items.length || Boolean(next.pending);
   $('#translate-item').textContent = next.reader.language === 'original' ? 'Read this in Sinhala' : 'Read the original';
   const confirmation = $('#confirmation'), wasHidden = confirmation.hidden;
   confirmation.hidden = !next.pending;
@@ -127,7 +129,7 @@ function stopPlayback() {
 }
 async function speak(request) {
   stopPlayback();
-  if (request.practice || !settings.speechEnabled || recorder?.state === 'recording') return;
+  if (request.practice || !settings.speechEnabled || recording.active) return;
   const token = playback;
   try {
     for (const text of splitForSpeech(request.text)) {
@@ -146,7 +148,9 @@ async function speak(request) {
       URL.revokeObjectURL(audioUrl); audioUrl = ''; audio = null; activeResolve = null;
     }
     $('#speaking-indicator').hidden = true;
-    if (request.reading && $('#continuous').checked && currentView === 'reader' && !state.pending && state.reader.index < state.reader.items.length - 1 && state.reader.index >= 0) {
+    if (request.batch) {
+      await attempt(async () => render(await api.continueReading(request.epoch, request.batch.index)));
+    } else if (request.reading && $('#continuous').checked && currentView === 'reader' && !state.pending && state.reader.index < state.reader.items.length - 1 && state.reader.index >= 0) {
       await control('next');
     }
   } catch (e) {
@@ -161,47 +165,36 @@ function tone(frequency = 660) {
     oscillator.stop(ctx.currentTime + .15); oscillator.onended = () => ctx.close();
   } catch {}
 }
-function resetRecordingUi() {
-  clearTimeout(recordingTimer); document.body.classList.remove('recording');
-  $('#talk-label').textContent = 'Start speaking'; $('#talk').setAttribute('aria-pressed', 'false');
-  $('#recording-hint').textContent = 'Speak in Sinhala or English. Press again when you’re done.';
-}
-function cancelRecording() {
-  discarded = true;
-  if (recorder?.state === 'recording') recorder.stop();
-  stream?.getTracks().forEach(track => track.stop()); stream = null; resetRecordingUi();
-}
-async function toggleRecording() {
-  if (recordingPending) return;
-  if (recorder?.state === 'recording') { recorder.stop(); tone(440); return; }
+const recording = new HoldRecorder({
+  prepare: async () => {
+    stopPlayback(); await api.control('stop');
+    if (!await api.microphonePermission()) throw new Error('Allow microphone access for Svara in macOS System Settings → Privacy & Security → Microphone.');
+  },
+  getStream: () => navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false }),
+  createRecorder: stream => {
+    const mimeType = ['audio/webm;codecs=opus', 'audio/webm'].find(type => MediaRecorder.isTypeSupported(type));
+    if (!mimeType) throw new Error('This version of the app cannot record audio.');
+    return new MediaRecorder(stream, { mimeType });
+  },
+  onState: status => {
+    const listening = status === 'recording';
+    document.body.classList.toggle('recording', listening);
+    $('#talk').setAttribute('aria-pressed', String(listening));
+    $('#talk-label').textContent = listening ? 'Release to send' : status === 'preparing' ? 'Getting microphone ready…' : 'Hold to speak';
+    $('#recording-hint').textContent = listening ? 'Listening… Release to send, or Escape to cancel. Maximum 45 seconds.'
+      : status === 'preparing' ? 'Keep holding. Start speaking when you hear the tone.'
+      : 'Hold your speaking key or this button. Speak after the tone, then release to send.';
+    if (listening) { tone(); $('#status-message').textContent = 'Listening to your command.'; }
+    if (status === 'sending') tone(440);
+  },
+  submit: async bytes => render(await api.audio(bytes)),
+  onError: error => notice(error.message)
+});
+function cancelRecording() { recording.cancel(); }
+function startRecording(source) {
   if (state.practice) { notice('Practice mode uses typed commands. Switch to live browsing to use your microphone.'); return; }
-  if (!settings.projectId) { view('settings'); notice('Add your Google Cloud project and credentials to use speech recognition.'); $('#project-id').focus(); return; }
-  recordingPending = true; stopPlayback();
-  try {
-    await api.control('stop');
-    const permitted = await api.microphonePermission();
-    if (!permitted) throw new Error('Allow microphone access for Svara in macOS System Settings → Privacy & Security → Microphone.');
-    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
-    const type = ['audio/webm;codecs=opus', 'audio/webm'].find(type => MediaRecorder.isTypeSupported(type));
-    if (!type) throw new Error('This version of the app cannot record audio.');
-    recorder = new MediaRecorder(stream, { mimeType: type });
-    const chunks = []; discarded = false;
-    recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
-    recorder.onstop = async () => {
-      stream?.getTracks().forEach(track => track.stop()); stream = null; resetRecordingUi();
-      if (discarded) return;
-      const blob = new Blob(chunks, { type });
-      if (blob.size < 1000) { notice('That recording was very short. Please try again.'); return; }
-      await attempt(async () => render(await api.audio(new Uint8Array(await blob.arrayBuffer()))));
-    };
-    recorder.onerror = () => { cancelRecording(); notice('The microphone stopped unexpectedly. Please try again.'); };
-    tone(); recorder.start(250);
-    document.body.classList.add('recording'); $('#talk-label').textContent = 'Finish speaking'; $('#talk').setAttribute('aria-pressed', 'true');
-    $('#recording-hint').textContent = 'Listening… Press again to send, or Escape to cancel. Maximum 45 seconds.';
-    $('#status-message').textContent = 'Listening to your command.';
-    recordingTimer = setTimeout(() => { if (recorder?.state === 'recording') recorder.stop(); }, 45000);
-  } catch (e) { cancelRecording(); notice(e.message); }
-  finally { recordingPending = false; }
+  if (!settings.projectId) { view('settings'); notice('Add your Google Cloud project and credentials to use speech recognition.'); return; }
+  recording.start(source);
 }
 
 document.querySelectorAll('[data-view]').forEach(button => button.onclick = () => view(button.dataset.view));
@@ -235,7 +228,31 @@ $('#check-connections').onclick = () => attempt(async () => {
 });
 $('#voice-test').onclick = () => attempt(async () => { await save(); render(await api.voiceTest()); });
 $('#clear-keys').onclick = () => attempt(() => save({ clearKeys: true, geminiKey: '', typesafeKey: '' }));
-$('#talk').onclick = toggleRecording;
+const talk = $('#talk');
+talk.addEventListener('pointerdown', event => {
+  if (event.button !== 0) return;
+  talk.setPointerCapture(event.pointerId); startRecording(`pointer-${event.pointerId}`);
+});
+talk.addEventListener('pointerup', event => recording.finish(`pointer-${event.pointerId}`));
+talk.addEventListener('pointercancel', cancelRecording);
+talk.addEventListener('lostpointercapture', event => recording.finish(`pointer-${event.pointerId}`));
+talk.addEventListener('keydown', event => {
+  if (!['Space', 'Enter'].includes(event.code)) return;
+  event.preventDefault(); if (!event.repeat) startRecording(`button-${event.code}`);
+});
+document.addEventListener('keyup', event => {
+  if (['Space', 'Enter'].includes(event.code) && recording.session?.source === `button-${event.code}`) {
+    event.preventDefault(); recording.finish(`button-${event.code}`);
+  }
+});
+// Pointer or focused-button holds cannot continue after focus is lost.
+window.addEventListener('blur', () => {
+  if (recording.session && recording.session.source !== 'shortcut') cancelRecording();
+});
+window.addEventListener('beforeunload', cancelRecording);
+talk.addEventListener('click', event => {
+  if (event.detail === 0 && !recording.active) notice('Hold Space or Enter on this button, or hold your speaking shortcut. Release to send.', false);
+});
 $('#stop-all').onclick = () => control('stop');
 for (const id of ['#practice', '#reader-practice']) $(id).onclick = () => attempt(async () => { stopPlayback(); render(await api.startBrowser(true)); view('reader'); });
 $('#live-mode').onclick = () => attempt(async () => { stopPlayback(); render(await api.startBrowser(false)); });
@@ -247,9 +264,15 @@ api.onState(render); api.onTabs(renderTabs); api.onNarration(speak); api.onStop(
 api.onNotice(data => { notice(data.text, data.error); if (data.error) tone(220); }); api.onNavigate(view); api.onCancelRecording(cancelRecording);
 api.onShortcut(action => {
   if (currentView === 'shortcuts') return;
-  if (action === 'speak') { toggleRecording(); return; }
+  if (action === 'speak-end') { recording.finish('shortcut'); return; }
+  if (action === 'speak-cancel' || action === 'speak-unavailable') {
+    cancelRecording();
+    if (action === 'speak-unavailable') notice('The speaking key could not be tracked. Restart Svara, or hold the speaking button.');
+    return;
+  }
+  if (action === 'speak-start') { startRecording('shortcut'); return; }
   if (!['next', 'previous', 'open'].includes(action)) return;
-  if (recorder?.state === 'recording' || recordingPending) { notice('Finish speaking before using the reading shortcuts.'); return; }
+  if (recording.active) { notice('Finish speaking before using the reading shortcuts.'); return; }
   if (state.pending) { notice('Confirm or cancel the pending choice before using the reading shortcuts.'); return; }
   control(action === 'open' ? 'open_current' : action);
 });

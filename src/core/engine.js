@@ -11,14 +11,14 @@ const messages = {
   end: ['You have reached the end of this reading list.', 'මෙම ලැයිස්තුවේ අවසානයට පැමිණියා.'],
   first: ['You are at the first item.', 'ඔබ පළමු අයිතමයේ සිටිනවා.'],
   unclear: ['I could not identify the command. Please try again, or say help.', 'විධානය පැහැදිලි නැහැ. නැවත කියන්න, නැත්නම් උදව් ඉල්ලන්න.'],
-  help: ['Say read results, next, previous, repeat, read in Sinhala, go back, new tab, play, or pause.', 'ප්‍රතිඵල කියවන්න, ඊළඟ එක, කලින් එක, නැවත කියවන්න, සිංහලෙන් කියවන්න, හෝ ආපසු යන්න කියන්න.']
+  help: ['Hold your speaking key and speak after the tone. Release it to send. Say read results, read first five, next, previous, repeat, read in Sinhala, go back, new tab, play, or pause.', 'කතා කරන විට යතුර ඔබාගෙන සිටින්න. සංඥා හඬෙන් පසු කතා කරන්න. යැවීමට යතුර අතහරින්න. ප්‍රතිඵල කියවන්න, මුල් පහ කියවන්න, ඊළඟ එක, කලින් එක, නැවත කියවන්න, සිංහලෙන් කියවන්න, හෝ ආපසු යන්න කියන්න.']
 };
 
 export class Engine extends EventEmitter {
   constructor({ browser, google, jev, settings }) {
     super(); Object.assign(this, { browser, google, jev, settings });
     this.reader = new Reader(); this.pending = null; this.status = 'ready'; this.message = 'Your browser, at your pace.';
-    this.transcript = ''; this.english = ''; this.history = []; this.epoch = 0; this.busy = false; this.snapshot = null;
+    this.transcript = ''; this.english = ''; this.history = []; this.epoch = 0; this.busy = false; this.snapshot = null; this.batch = null;
   }
   view() {
     return { status: this.status, message: this.message, transcript: this.transcript, english: this.english,
@@ -30,7 +30,8 @@ export class Engine extends EventEmitter {
   update(status, message) { if (status) this.status = status; if (message !== undefined) this.message = message; this.emit('state', this.view()); }
   say(text, language = this.settings().guidanceLanguage, reading = false) {
     this.message = text; this.emit('state', this.view());
-    this.emit('narration', { text, language, epoch: this.epoch, practice: this.browser.practice, reading });
+    this.emit('narration', { text, language, epoch: this.epoch, practice: this.browser.practice, reading,
+      batch: reading && this.batch ? { index: this.reader.index, count: this.batch.count } : null });
   }
   tell(key) {
     const sinhala = this.settings().guidanceLanguage === 'si-LK';
@@ -45,12 +46,14 @@ export class Engine extends EventEmitter {
     this.say(text);
   }
   stop() {
+    this.batch = null;
     this.epoch++; this.abort?.abort(); this.pending = null;
     this.emit('stop'); this.update('ready', messages.stopped[this.settings().guidanceLanguage === 'si-LK' ? 1 : 0]);
   }
   current(epoch) { if (epoch !== this.epoch) throw new DOMException('Cancelled', 'AbortError'); }
   async run(fn) {
     if (this.busy) throw new Error('A command is still finishing. Press Escape to cancel it, then try again.');
+    this.batch = null;
     this.busy = true; const epoch = ++this.epoch; this.abort = new AbortController(); this.emit('stop');
     try { await fn(epoch, this.abort.signal); this.current(epoch); if (this.status !== 'confirm') this.update('ready'); }
     catch (error) {
@@ -196,9 +199,32 @@ export class Engine extends EventEmitter {
     }
     this.say(`${this.reader.index + 1}. ${text}`, language, true);
   }
+  async continueReading(epoch, index) {
+    // A playback acknowledgement can advance only the item actually being read.
+    // Stop, a new command, or another acknowledgement invalidates its epoch.
+    if (!this.batch || this.busy || epoch !== this.epoch || this.batch.epoch !== epoch || index !== this.reader.index) return this.view();
+    const count = this.batch.count; this.batch = null;
+    if (index + 1 >= count) return this.view();
+    return this.run(async (nextEpoch, signal) => {
+      if (!await this.browser.isCurrent(this.reader.snapshot)) throw new Error('The page changed. Refresh the reading list before reading more items.');
+      this.current(nextEpoch);
+      this.reader.select(index + 1);
+      this.batch = { epoch: nextEpoch, count };
+      await this.read(nextEpoch, signal);
+    });
+  }
   async perform(action, command, epoch, signal) {
     const scopes = { read_results: 'results', read_headings: 'headings', read_page: 'article', read_links: 'links' };
-    if (scopes[action]) {
+    if (action === 'read_first_five') {
+      if (this.pending) throw new Error('Confirm or cancel the pending choice before reading the first five items.');
+      this.update('working', 'Collecting the first five items…');
+      this.snapshot = await this.browser.snapshot(); this.current(epoch);
+      this.reader.load(this.snapshot, this.reader.scope);
+      if (!this.reader.items.length) { this.tell('empty'); return; }
+      this.reader.select(0);
+      this.batch = { epoch, count: Math.min(5, this.reader.items.length) };
+      await this.read(epoch, signal);
+    } else if (scopes[action]) {
       this.update('working', 'Collecting page content…');
       this.snapshot = await this.browser.snapshot(); this.current(epoch);
       this.reader.load(this.snapshot, scopes[action]); this.reader.index = this.reader.items.length ? 0 : -1;

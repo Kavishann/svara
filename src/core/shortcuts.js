@@ -1,5 +1,5 @@
 export const SHORTCUT_ACTIONS = {
-  speak: { label: 'Start / finish speaking', sinhala: 'කතා කරන්න / අවසන් කරන්න' },
+  speak: { label: 'Hold to speak', sinhala: 'කතා කරන විට යතුර ඔබාගෙන සිටින්න' },
   previous: { label: 'Read previous item', sinhala: 'කලින් එක කියවන්න' },
   next: { label: 'Read next item', sinhala: 'ඊළඟ එක කියවන්න' },
   open: { label: 'Open current item', sinhala: 'තෝරාගත් අයිතමය විවෘත කරන්න' }
