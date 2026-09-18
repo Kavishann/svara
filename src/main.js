@@ -7,6 +7,8 @@ import { BrowserController } from './browser/browser.js';
 import { GoogleServices } from './services/google.js';
 import { JevService } from './services/jev.js';
 import { Engine } from './core/engine.js';
+import { ShortcutManager } from './shortcuts.js';
+import { STOP_SHORTCUT } from './core/shortcuts.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const rendererFile = path.join(root, 'renderer/index.html');
@@ -35,6 +37,8 @@ browser = new BrowserController({ directory: app.getPath('userData'), headless: 
   onChange: () => { browser.tabs().then(tabs => send('tabs', tabs)).catch(() => {}); } });
 const jev = new JevService(() => settings.data);
 engine = new Engine({ browser, google, jev, settings: () => settings.data });
+const shortcuts = new ShortcutManager(globalShortcut, action => send('shortcut-action', action));
+let shortcutWarning = '';
 for (const event of ['state', 'narration', 'stop', 'notice']) engine.on(event, data => send(event, data));
 
 session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
@@ -51,8 +55,19 @@ window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 window.webContents.on('will-navigate', event => event.preventDefault());
 window.webContents.on('will-attach-webview', event => event.preventDefault());
 
-handle('initial', async () => ({ state: engine.view(), settings: settings.public(), tabs: await browser.tabs(), version: app.getVersion() }));
-handle('settings-save', input => settings.save(input));
+handle('initial', async () => ({ state: engine.view(), settings: settings.public(), tabs: await browser.tabs(), version: app.getVersion(), shortcutWarning }));
+handle('settings-save', input => {
+  if (input && Object.hasOwn(input, 'shortcuts')) throw new Error('Save keyboard choices from Keyboard shortcuts.');
+  return settings.save(input);
+});
+handle('shortcuts-save', async input => {
+  const result = await shortcuts.save(input, next => settings.saveShortcuts(next));
+  shortcutWarning = ''; return result;
+});
+handle('shortcuts-editing', value => {
+  if (typeof value !== 'boolean') throw new Error('Choose a shortcut setting.');
+  shortcuts.setEditing(value);
+});
 handle('credentials-file', async () => {
   const result = await dialog.showOpenDialog(window, { title: 'Choose Google Cloud credentials', properties: ['openFile'], filters: [{ name: 'Google service account JSON', extensions: ['json'] }] });
   if (result.canceled) return settings.public();
@@ -70,7 +85,7 @@ handle('connections-check', async () => {
 handle('start-browser', practice => { if (typeof practice !== 'boolean') throw new Error('Choose live or practice mode.'); return engine.start(practice); });
 handle('show-browser', () => browser.show());
 handle('command', text => { if (typeof text !== 'string') throw new Error('Enter a spoken or typed command.'); return engine.input(text); });
-const allowed = new Set(['stop', 'select', 'open_item', 'confirm', 'choose', 'switch_tab', 'next', 'previous', 'repeat', 'read_results', 'read_headings', 'read_page', 'read_links', 'read_sinhala', 'read_original', 'where', 'help', 'back', 'forward', 'reload', 'new_tab', 'close_tab', 'next_tab', 'previous_tab', 'scroll_down', 'scroll_up', 'play', 'pause']);
+const allowed = new Set(['stop', 'select', 'open_item', 'open_current', 'confirm', 'choose', 'switch_tab', 'next', 'previous', 'repeat', 'read_results', 'read_headings', 'read_page', 'read_links', 'read_sinhala', 'read_original', 'where', 'help', 'back', 'forward', 'reload', 'new_tab', 'close_tab', 'next_tab', 'previous_tab', 'scroll_down', 'scroll_up', 'play', 'pause']);
 handle('control', (action, index) => {
   if (!allowed.has(action) || (index !== undefined && (!Number.isInteger(index) || index < 0 || index > 10000))) throw new Error('That control is not available.');
   return engine.control(action, index);
@@ -102,14 +117,17 @@ handle('voice-test', () => engine.run(async epoch => {
 }));
 
 Menu.setApplicationMenu(Menu.buildFromTemplate([
-  { label: 'Svara', submenu: [{ role: 'about' }, { label: 'Connections…', accelerator: 'CmdOrCtrl+,', click: () => send('navigate', 'settings') }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
+  { label: 'Svara', submenu: [{ role: 'about' }, { label: 'Connections…', accelerator: 'CmdOrCtrl+,', click: () => send('navigate', 'settings') }, { label: 'Keyboard shortcuts…', accelerator: 'CmdOrCtrl+K', click: () => send('navigate', 'shortcuts') }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
   { label: 'Edit', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
   { label: 'Browse', submenu: [{ label: 'Show browser', click: () => browser.show().catch(e => send('notice', { text: e.message, error: true })) }, { label: 'Stop reading', accelerator: 'Escape', click: () => { engine.stop(); send('cancel-recording'); } }, { label: 'Help', click: () => send('navigate', 'help') }] },
   { label: 'View', submenu: [{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'togglefullscreen' }] },
   { role: 'windowMenu' }
 ]));
-globalShortcut.register('Control+Alt+Space', () => send('toggle-recording'));
-globalShortcut.register('Control+Alt+Escape', () => { engine.stop(); send('cancel-recording'); });
+shortcutWarning = shortcuts.start(settings.data.shortcuts);
+if (!globalShortcut.register(STOP_SHORTCUT, () => { engine.stop(); send('cancel-recording'); })) {
+  shortcutWarning += ' The stop shortcut is unavailable. Escape still stops reading inside Svara.';
+}
+window.webContents.on('render-process-gone', () => shortcuts.setEditing(false));
 await window.loadFile(rendererFile);
 app.on('activate', () => { if (window && !window.isDestroyed()) window.show(); });
 app.on('window-all-closed', () => app.quit());

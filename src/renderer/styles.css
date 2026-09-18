@@ -241,3 +241,14 @@ main{margin-left:184px;width:calc(100% - 184px)}
 :is(.titlebar,.small-tag,.hero p,.shortcut,kbd,.statusbar){color:#4f654c}
 :is(.sidebar-label,.language-note div span,.version,.eyebrow,.hero-footnote,.section-heading span,.practice-card p,.home-footer,.subtle,.reader-header p,.page-heading p,.browser-bar span,.list-info,.item-button small,.reading-options label,.settings-card p,.privacy-note,.steps,.phrases dd,.step,.item-number,.empty){color:#546a51}
 .site-card>span:not(.site-icon){color:#546a51}.reading-card #current-meta{color:#546a51}.command-box input::placeholder{color:#637568}.google{color:#416b8b}#position{background:none;width:auto;height:auto;white-space:nowrap;border-radius:0;font-size:10px;letter-spacing:0}
+
+/* Shortcut choices stay in normal keyboard navigation order. */
+.shortcut-row{display:grid;grid-template-columns:minmax(200px,1.3fr) minmax(120px,.7fr) minmax(180px,1fr);gap:18px;align-items:center;border-top:1px solid #e2e8e1;padding:16px 0}
+.shortcut-row:first-child{margin-top:22px}
+.shortcut-row strong{display:block;font-size:13px;font-weight:550}
+.shortcut-row span{display:block;color:#546a51;font-size:12px;margin-top:5px}
+.shortcut-card .shortcut-row label{margin-top:0}
+.shortcut-status{background:#edf3e7;padding:12px 14px;border-radius:8px;min-height:40px}
+.shortcut-card .shortcut-status.failed{background:#fff0df;color:#79511f}
+.shortcut-card select:disabled{opacity:.6}
+@media(max-width:1080px){.shortcut-row{grid-template-columns:minmax(160px,1.2fr) minmax(100px,.7fr) minmax(150px,1fr);gap:12px}}

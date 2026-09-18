@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
+import { DEFAULT_SHORTCUTS, normalizeShortcuts } from './core/shortcuts.js';
 
 const publicSchema = z.object({
   projectId: z.string().max(120).regex(/^[a-zA-Z0-9:_-]*$/),
@@ -10,6 +11,7 @@ const publicSchema = z.object({
   guidanceLanguage: z.enum(['si-LK', 'en-US']),
   speechEnabled: z.boolean(),
   rate: z.number().min(0.6).max(2),
+  shortcuts: z.unknown().transform(normalizeShortcuts).optional(),
   geminiKey: z.string().max(500).optional(),
   typesafeKey: z.string().max(500).optional(),
   clearKeys: z.boolean().optional()
@@ -19,7 +21,8 @@ export class Settings {
   constructor(directory, safeStorage) {
     this.directory = directory; this.safeStorage = safeStorage;
     this.data = { projectId: '', region: 'asia-southeast1', inputLanguage: 'si-LK', voice: 'Kore',
-      guidanceLanguage: 'si-LK', speechEnabled: true, rate: 1, credentialsPath: '', geminiKey: '', typesafeKey: '' };
+      guidanceLanguage: 'si-LK', speechEnabled: true, rate: 1, credentialsPath: '', geminiKey: '', typesafeKey: '',
+      shortcuts: normalizeShortcuts(DEFAULT_SHORTCUTS) };
   }
   async load() {
     try {
@@ -54,6 +57,10 @@ export class Settings {
   }
   async setCredentialFile(file) {
     const next = { ...this.data, credentialsPath: file };
+    await this.persist(next); this.data = next; return this.public();
+  }
+  async saveShortcuts(input) {
+    const next = { ...this.data, shortcuts: normalizeShortcuts(input) };
     await this.persist(next); this.data = next; return this.public();
   }
   async persist(data) {

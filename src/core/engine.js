@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { Reader } from './reader.js';
 import { localAction, confirmation, spokenNumber, languageOf, targetNeedsConfirmation } from './policy.js';
 import { ServiceError } from '../services/errors.js';
+import { DEFAULT_SHORTCUTS, SHORTCUT_ACTIONS, STOP_SHORTCUT, shortcutLabel } from './shortcuts.js';
 
 const messages = {
   ready: ['Ready. Say a command or choose something to read.', 'සූදානම්. විධානයක් කියන්න, නැත්නම් කියවීමට යමක් තෝරන්න.'],
@@ -10,7 +11,7 @@ const messages = {
   end: ['You have reached the end of this reading list.', 'මෙම ලැයිස්තුවේ අවසානයට පැමිණියා.'],
   first: ['You are at the first item.', 'ඔබ පළමු අයිතමයේ සිටිනවා.'],
   unclear: ['I could not identify the command. Please try again, or say help.', 'විධානය පැහැදිලි නැහැ. නැවත කියන්න, නැත්නම් උදව් ඉල්ලන්න.'],
-  help: ['Say read results, next, previous, repeat, read in Sinhala, go back, new tab, play, or pause. Control Option Space starts and finishes recording. Escape stops reading.', 'ප්‍රතිඵල කියවන්න, ඊළඟ එක, කලින් එක, නැවත කියවන්න, සිංහලෙන් කියවන්න, හෝ ආපසු යන්න කියන්න. Control Option Space යතුරු මගින් කථනය පටිගත කරන්න. Escape යතුරෙන් කියවීම නවත්වන්න.']
+  help: ['Say read results, next, previous, repeat, read in Sinhala, go back, new tab, play, or pause.', 'ප්‍රතිඵල කියවන්න, ඊළඟ එක, කලින් එක, නැවත කියවන්න, සිංහලෙන් කියවන්න, හෝ ආපසු යන්න කියන්න.']
 };
 
 export class Engine extends EventEmitter {
@@ -31,7 +32,18 @@ export class Engine extends EventEmitter {
     this.message = text; this.emit('state', this.view());
     this.emit('narration', { text, language, epoch: this.epoch, practice: this.browser.practice, reading });
   }
-  tell(key) { this.say(messages[key][this.settings().guidanceLanguage === 'si-LK' ? 1 : 0]); }
+  tell(key) {
+    const sinhala = this.settings().guidanceLanguage === 'si-LK';
+    let text = messages[key][sinhala ? 1 : 0];
+    if (key === 'help') {
+      const shortcuts = this.settings().shortcuts || DEFAULT_SHORTCUTS;
+      for (const [action, value] of Object.entries(shortcuts.bindings)) if (shortcuts.enabled && value) {
+        text += ` ${sinhala ? SHORTCUT_ACTIONS[action].sinhala : SHORTCUT_ACTIONS[action].label}: ${shortcutLabel(value)}.`;
+      }
+      text += sinhala ? ` කියවීම නවත්වන්න: ${shortcutLabel(STOP_SHORTCUT)}.` : ` Stop reading: ${shortcutLabel(STOP_SHORTCUT)}.`;
+    }
+    this.say(text);
+  }
   stop() {
     this.epoch++; this.abort?.abort(); this.pending = null;
     this.emit('stop'); this.update('ready', messages.stopped[this.settings().guidanceLanguage === 'si-LK' ? 1 : 0]);
@@ -212,8 +224,10 @@ export class Engine extends EventEmitter {
     if (action === 'stop') { this.stop(); return this.view(); }
     return this.run(async (epoch, signal) => {
       if (action === 'select') { this.reader.select(index); await this.read(epoch, signal); }
-      else if (action === 'open_item') {
-        const item = this.reader.select(index);
+      else if (action === 'open_item' || action === 'open_current') {
+        if (this.pending) throw new Error('Confirm or cancel the pending choice before opening a reading item.');
+        if (!this.reader.current() && action === 'open_current') { this.tell('empty'); return; }
+        const item = this.reader.select(action === 'open_current' ? this.reader.index : index);
         if (!item.targetId) throw new Error('This is a reading passage, not a link.');
         const target = { ...item, id: item.targetId };
         await this.prepareTarget(target, 'click', {}, 0, this.reader.snapshot, epoch, signal);

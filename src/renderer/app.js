@@ -1,8 +1,11 @@
 import { splitForSpeech, speechLocale } from './audio.js';
+import { DEFAULT_SHORTCUTS, shortcutLabel } from '../core/shortcuts.js';
+import { createShortcutEditor } from './shortcuts.js';
 const api = window.svara;
 const $ = selector => document.querySelector(selector);
 let state, settings, currentView = 'home', tabs = [], recorder = null, stream = null, recordingTimer, discarded = false;
 let recordingPending = false, audio = null, audioUrl = '', playback = 0, activeResolve = null, noticeTimer;
+const shortcutEditor = createShortcutEditor({ api, saved: fillSettings, activate: () => view('home'), notice });
 
 function notice(text, error = true) {
   clearTimeout(noticeTimer); const box = $('#notice'); box.textContent = text; box.hidden = false; box.classList.toggle('success', !error);
@@ -11,12 +14,14 @@ function notice(text, error = true) {
 async function attempt(fn) {
   try { return await fn(); } catch (e) { notice(e.message); return null; }
 }
-function view(name) {
-  if (!['home', 'reader', 'settings', 'help'].includes(name)) return;
+async function view(name) {
+  if (!['home', 'reader', 'settings', 'shortcuts', 'help'].includes(name)) return;
+  try { await api.editShortcuts(name === 'shortcuts'); } catch (error) { notice(error.message); return; }
+  if (name === 'shortcuts') { cancelRecording(); stopPlayback(); shortcutEditor.fill(settings.shortcuts); }
   currentView = name;
   document.querySelectorAll('.view').forEach(el => { el.hidden = el.id !== `view-${name}`; });
   document.querySelectorAll('.nav-button').forEach(el => { el.classList.toggle('active', el.dataset.view === name); if (el.dataset.view === name) el.setAttribute('aria-current', 'page'); else el.removeAttribute('aria-current'); });
-  const labels = { home: ['WELCOME TO SVARA', 'Your browser, at your pace.'], reader: ['YOUR BROWSER', 'Find your place. Follow your curiosity.'], settings: ['CONNECTIONS', 'A few details, then you’re ready.'], help: ['HELP & COMMANDS', 'You’re in control.'] };
+  const labels = { home: ['WELCOME TO SVARA', 'Your browser, at your pace.'], reader: ['YOUR BROWSER', 'Find your place. Follow your curiosity.'], settings: ['CONNECTIONS', 'A few details, then you’re ready.'], shortcuts: ['KEYBOARD SHORTCUTS', 'Your keys. Your pace.'], help: ['HELP & COMMANDS', 'You’re in control.'] };
   $('#view-eyebrow').textContent = labels[name][0]; $('#breadcrumb').textContent = labels[name][1];
   $('#main').focus({ preventScroll: true });
 }
@@ -91,6 +96,15 @@ function fillSettings(data) {
   $('#credential-file').textContent = data.credentialFile ? `Selected file: ${data.credentialFile}` : 'Or use Google Application Default Credentials already configured on this Mac.';
   $('#setup-dot').hidden = Boolean(data.hasGeminiKey && data.hasTypesafeKey && data.projectId);
   $('#rate-value').textContent = `${Number(data.rate).toFixed(1)}×`;
+  const shortcuts = data.shortcuts || DEFAULT_SHORTCUTS;
+  document.querySelectorAll('[data-shortcut-hint]').forEach(element => {
+    const value = shortcuts.enabled ? shortcuts.bindings[element.dataset.shortcutHint] : '';
+    element.textContent = value ? shortcutLabel(value) : 'Shortcut off';
+  });
+  for (const [selector, action] of Object.entries({ '#talk': 'speak', '[data-action="next"]': 'next', '[data-action="previous"]': 'previous', '#open-item': 'open' })) {
+    const button = $(selector), key = shortcuts.enabled && shortcuts.bindings[action];
+    button.title = key ? shortcutLabel(key) : 'Choose a key in Keyboard shortcuts';
+  }
   if (data.warning) notice(data.warning);
 }
 function settingsInput(extra = {}) {
@@ -228,7 +242,15 @@ $('#live-mode').onclick = () => attempt(async () => { stopPlayback(); render(awa
 $('#show-browser').onclick = () => attempt(() => api.showBrowser());
 $('#rate').oninput = () => { const rate = Number($('#rate').value); $('#rate-value').textContent = rate.toFixed(1) + '×'; if (audio) audio.playbackRate = rate; };
 $('#rate').onchange = () => attempt(async () => { settings = await api.saveSettings(settingsInput()); });
-document.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); control('stop'); } });
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && currentView !== 'shortcuts') { event.preventDefault(); control('stop'); } });
 api.onState(render); api.onTabs(renderTabs); api.onNarration(speak); api.onStop(stopPlayback);
-api.onNotice(data => { notice(data.text, data.error); if (data.error) tone(220); }); api.onNavigate(view); api.onToggleRecording(toggleRecording); api.onCancelRecording(cancelRecording);
-await attempt(async () => { const initial = await api.initial(); fillSettings(initial.settings); render(initial.state); renderTabs(initial.tabs); });
+api.onNotice(data => { notice(data.text, data.error); if (data.error) tone(220); }); api.onNavigate(view); api.onCancelRecording(cancelRecording);
+api.onShortcut(action => {
+  if (currentView === 'shortcuts') return;
+  if (action === 'speak') { toggleRecording(); return; }
+  if (!['next', 'previous', 'open'].includes(action)) return;
+  if (recorder?.state === 'recording' || recordingPending) { notice('Finish speaking before using the reading shortcuts.'); return; }
+  if (state.pending) { notice('Confirm or cancel the pending choice before using the reading shortcuts.'); return; }
+  control(action === 'open' ? 'open_current' : action);
+});
+await attempt(async () => { await api.editShortcuts(false); const initial = await api.initial(); fillSettings(initial.settings); render(initial.state); renderTabs(initial.tabs); if (initial.shortcutWarning) notice(initial.shortcutWarning); });

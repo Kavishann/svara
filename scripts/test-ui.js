@@ -41,6 +41,39 @@ try {
   await window.waitForFunction(() => document.querySelector('#notice').textContent.includes('saved'));
   await window.screenshot({ path: 'artifacts/connections.png', fullPage: true });
   await audit('Connections');
+  await window.getByRole('button', { name: 'Keyboard shortcuts', exact: true }).click();
+  await window.waitForSelector('#view-shortcuts:not([hidden])');
+  assert.equal(await app.evaluate(({ globalShortcut }) => globalShortcut.isSuspended()), true);
+  await window.getByRole('button', { name: 'Use single keys · F6–F9', exact: true }).click();
+  await window.locator('#shortcut-next-key').selectOption('F8');
+  await window.getByRole('button', { name: 'Save and use shortcuts', exact: true }).click();
+  await window.waitForFunction(() => document.querySelector('#shortcut-status').textContent.includes('assigned twice'));
+  await window.locator('#shortcut-next-key').selectOption('F7');
+  await audit('Keyboard shortcuts');
+  await window.locator('#main').focus();
+  await window.evaluate(() => window.scrollTo(0, 0));
+  await window.screenshot({ path: 'artifacts/shortcuts.png' });
+  await window.getByRole('button', { name: 'Save and use shortcuts', exact: true }).click();
+  await window.waitForSelector('#view-home:not([hidden])');
+  assert.equal(await app.evaluate(({ globalShortcut }) => globalShortcut.isSuspended()), false);
+  assert.equal(await app.evaluate(({ globalShortcut }) => ['F6', 'F7', 'F8', 'F9'].every(key => globalShortcut.isRegistered(key))), true);
+  assert.equal(await window.locator('.hero [data-shortcut-hint="speak"]').textContent(), 'F8');
+  // Exercise the same IPC event emitted by the native shortcut callbacks, without recording the user's microphone.
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('shortcut-action', 'next'));
+  await window.waitForFunction(() => document.querySelector('#position').textContent === '2 / 5');
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('shortcut-action', 'previous'));
+  await window.waitForFunction(() => document.querySelector('#position').textContent === '1 / 5');
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('shortcut-action', 'speak'));
+  await window.waitForFunction(() => document.querySelector('#notice').textContent.includes('Practice mode uses typed commands'));
+  await window.reload();
+  await window.waitForFunction(() => document.querySelector('.hero [data-shortcut-hint="speak"]').textContent === 'F8');
+  await window.getByRole('button', { name: 'Keyboard shortcuts', exact: true }).click();
+  await window.waitForSelector('#view-shortcuts:not([hidden])');
+  assert.equal(await window.locator('#shortcut-next-key').inputValue(), 'F7');
+  await window.locator('#shortcuts-enabled').uncheck();
+  await window.getByRole('button', { name: 'Save and use shortcuts', exact: true }).click();
+  await window.waitForSelector('#view-home:not([hidden])');
+  assert.equal(await app.evaluate(({ globalShortcut }) => globalShortcut.isRegistered('F8')), false);
   await window.getByRole('button', { name: 'Home', exact: true }).click();
   await window.locator('#command-input').fill('next');
   await window.getByRole('button', { name: 'Send command', exact: true }).click();
@@ -48,5 +81,5 @@ try {
   await window.keyboard.press('Escape');
   await window.waitForFunction(() => /Stopped|නැවැත්තුවා/.test(document.querySelector('#status-message').textContent));
   assert.deepEqual(errors, []);
-  console.log('Desktop UI passed: home, practice, reader navigation, scopes, settings, typed commands, Escape, renderer isolation. Screenshots in artifacts/.');
+  console.log('Desktop UI passed: home, practice, reader, settings, shortcut editing, conflicts, native registration, actions, reload persistence, disabling, Escape, and accessibility. Screenshots in artifacts/.');
 } finally { await app.close(); await rm(directory, { recursive: true, force: true }); }

@@ -46,7 +46,7 @@ API keys are encrypted with Electron `safeStorage` backed by macOS secure storag
 
 | Action | Control |
 | --- | --- |
-| Start/finish recording | **Control + Option + Space**, or Start speaking |
+| Start/finish recording | Your speaking shortcut (initially **Control + Option + Space**), or Start speaking |
 | Stop reading/cancel a recording | **Escape** in Svara; **Control + Option + Escape** anywhere |
 | Read a section | Results, Headings, Page text, or Links |
 | Navigate reading items | Previous, Next, Read again, or numbered list buttons |
@@ -54,6 +54,11 @@ API keys are encrypted with Electron `safeStorage` backed by macOS secure storag
 | Translate selected passage | Read this in Sinhala; Read the original switches back |
 | Continue automatically | Keep reading the next item |
 | Change speaking speed | Speed slider; implemented in audio playback |
+| Configure keyboard shortcuts | **Keyboard shortcuts** in the sidebar, or **Command + K** in Svara |
+
+In **Keyboard shortcuts**, choose a key and optional extra keys for speaking, previous, next, and opening the current item. **Use single keys · F6–F9** selects F8 for speaking, F6 for previous, F7 for next, and F9 for opening. Choose **Save and use shortcuts** to apply the choices immediately and return Home. Your choices are saved on this Mac and restored at startup; existing API connections are preserved. Home and spoken Help show the saved keys.
+
+Custom shortcuts work across applications while Svara runs. Single letters, arrows, Space, and Enter therefore also intercept normal typing; switch custom shortcuts off in the editor when needed. Function keys may require Fn depending on your Mac keyboard settings. Keys are paused while the editor is open so you can use its controls. Command + K opens the editor from Svara, and Command + Q remains available to quit. Duplicate or unavailable keys cannot be saved, and a failed change keeps the previous shortcuts. The Open shortcut uses the currently selected reading item and retains normal target verification and confirmation.
 
 Commands include `open YouTube`, `search YouTube for ...`, `new tab`, `go back`, `read results`, `next`, `previous`, `repeat`, `read in Sinhala`, `read original`, `where am I`, `play`, `pause`, and `stop`. Sinhala fixed phrases are listed under Help & commands. Conversational Sinhala and mixed-language phrases are translated by Gemini before Jev evaluates them.
 
