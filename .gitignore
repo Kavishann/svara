@@ -1,0 +1,11 @@
+node_modules/
+dist/
+artifacts/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+credentials*.json
+service-account*.json
+coverage/

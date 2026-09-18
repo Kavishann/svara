@@ -1,0 +1,55 @@
+{
+  "name": "svara-browser",
+  "productName": "Svara",
+  "version": "0.1.0",
+  "description": "A voice-guided browser for Sinhala speakers",
+  "private": true,
+  "type": "module",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "test:ui": "node scripts/test-ui.js",
+    "check": "node scripts/check.js",
+    "build:mac": "electron-builder --mac dir",
+    "dist:mac": "electron-builder --mac dmg",
+    "browser:install": "playwright install chromium"
+  },
+  "dependencies": {
+    "@google-cloud/speech": "^8.1.0",
+    "@google-cloud/text-to-speech": "^7.1.0",
+    "@google/genai": "^2.23.0",
+    "@typesafe-ai/sdk": "^0.6.0",
+    "playwright": "^1.55.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "electron": "^44.4.2",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.svara.browser",
+    "productName": "Svara",
+    "files": [
+      "src/**/*",
+      "package.json",
+      "README.md",
+      "THIRD_PARTY_NOTICES.md"
+    ],
+    "asarUnpack": [
+      "node_modules/playwright*/**/*"
+    ],
+    "extraResources": [{ "from": "src/practice", "to": "practice" }],
+    "mac": {
+      "icon": "build/icon.icns",
+      "category": "public.app-category.utilities",
+      "target": [
+        "dmg"
+      ],
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Svara listens to the commands you choose to record so you can browse the web by voice."
+      }
+    }
+  }
+}
