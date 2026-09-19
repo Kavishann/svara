@@ -119,7 +119,7 @@ function fillSettings(data) {
     const value = shortcuts.enabled ? shortcuts.bindings[element.dataset.shortcutHint] : '';
     element.textContent = value ? shortcutLabel(value) : 'Shortcut off';
   });
-  for (const [selector, action] of Object.entries({ '#talk': 'speak', '[data-action="focus_next"]': 'next', '[data-action="focus_previous"]': 'previous', '#open-item': 'open', '#read-selected': 'read', '#stop-all': 'stop' })) {
+  for (const [selector, action] of Object.entries({ '#talk': 'speak', '[data-action="focus_next"]': 'next', '[data-action="focus_previous"]': 'previous', '#open-item': 'open', '#read-selected': 'read', '#stop-all': 'stop', '#read-first-five': 'first_five', '[data-scope="results"]': 'results', '[data-scope="headings"]': 'headings', '[data-scope="article"]': 'page_text', '[data-scope="links"]': 'links' })) {
     const button = $(selector), key = shortcuts.enabled && shortcuts.bindings[action];
     button.title = key ? shortcutLabel(key) : 'Choose a key in Keyboard shortcuts';
   }
@@ -147,6 +147,7 @@ async function control(action, index) {
 }
 function stopPlayback() {
   playback++;
+  api.stopLocalSpeech().catch(() => {});
   if (audio) { audio.pause(); audio.src = ''; audio = null; }
   if (audioUrl) { URL.revokeObjectURL(audioUrl); audioUrl = ''; }
   if (activeResolve) { activeResolve(); activeResolve = null; }
@@ -154,23 +155,32 @@ function stopPlayback() {
 }
 async function speak(request) {
   stopPlayback();
-  if (request.practice || !settings.speechEnabled || recording.active) return;
+  if (!settings.speechEnabled || recording.active) return;
   const token = playback;
   try {
-    for (const text of splitForSpeech(request.text)) {
-      if (token !== playback) return;
-      const base64 = await api.synthesize({ text, language: speechLocale(request.language, text), epoch: request.epoch });
-      if (!base64 || token !== playback) return;
-      const bytes = Uint8Array.from(atob(base64), char => char.charCodeAt(0));
-      audioUrl = URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' })); audio = new Audio(audioUrl);
-      audio.playbackRate = Number($('#rate').value);
+    const route = await api.speechRoute({ text: request.text, language: request.language, epoch: request.epoch });
+    if (token !== playback) return;
+    if (route.local) {
       $('#speaking-indicator').hidden = false;
-      await new Promise((resolve, reject) => {
-        activeResolve = resolve; audio.onended = resolve; audio.onerror = () => reject(new Error('The audio could not be played. Try reading the item again.'));
-        audio.play().catch(reject);
-      });
-      if (token !== playback) return;
-      URL.revokeObjectURL(audioUrl); audioUrl = ''; audio = null; activeResolve = null;
+      const completed = await api.speakLocal({ text: request.text, language: request.language, epoch: request.epoch });
+      if (token !== playback || !completed) return;
+    } else {
+      if (request.practice) return;
+      for (const text of splitForSpeech(request.text)) {
+        if (token !== playback) return;
+        const base64 = await api.synthesize({ text, language: speechLocale(route.language, text), epoch: request.epoch });
+        if (!base64 || token !== playback) return;
+        const bytes = Uint8Array.from(atob(base64), char => char.charCodeAt(0));
+        audioUrl = URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' })); audio = new Audio(audioUrl);
+        audio.playbackRate = Number($('#rate').value);
+        $('#speaking-indicator').hidden = false;
+        await new Promise((resolve, reject) => {
+          activeResolve = resolve; audio.onended = resolve; audio.onerror = () => reject(new Error('The audio could not be played. Try reading the item again.'));
+          audio.play().catch(reject);
+        });
+        if (token !== playback) return;
+        URL.revokeObjectURL(audioUrl); audioUrl = ''; audio = null; activeResolve = null;
+      }
     }
     $('#speaking-indicator').hidden = true;
     if (request.batch) {
@@ -226,7 +236,7 @@ document.querySelectorAll('[data-view]').forEach(button => button.onclick = () =
 $('.brand').onclick = event => { event.preventDefault(); view('home'); };
 document.querySelectorAll('[data-action]').forEach(button => button.onclick = () => control(button.dataset.action));
 document.querySelectorAll('[data-site]').forEach(button => button.onclick = () => attempt(async () => { view('reader'); render(await api.openSite(button.dataset.site)); }));
-const scopes = { results: 'read_results', headings: 'read_headings', article: 'read_page', links: 'read_links' };
+const scopes = { results: 'show_results', headings: 'show_headings', article: 'show_page', links: 'show_links' };
 document.querySelectorAll('[data-scope]').forEach(button => button.onclick = () => control(scopes[button.dataset.scope]));
 $('#refresh-reader').onclick = () => control(scopes[state.reader.scope]);
 $('#open-item').onclick = () => control('open_item', state.reader.index);
@@ -315,9 +325,12 @@ api.onShortcut(action => {
     return;
   }
   if (action === 'speak-start') { startRecording('shortcut'); return; }
-  if (!['next', 'previous', 'open', 'read'].includes(action)) return;
+  const controls = { open: 'open_current', read: 'repeat', next: 'focus_next', previous: 'focus_previous',
+    results: 'show_results', headings: 'show_headings', page_text: 'show_page', links: 'show_links',
+    first_five: 'read_first_five', read_sinhala: 'read_sinhala', read_original: 'read_original' };
+  if (!controls[action]) return;
   if (recording.active) { notice('Finish speaking before using the reading shortcuts.'); return; }
   if (state.pending) { notice('Confirm or cancel the pending choice before using the reading shortcuts.'); return; }
-  control({ open: 'open_current', read: 'repeat', next: 'focus_next', previous: 'focus_previous' }[action]);
+  control(controls[action]);
 });
 await attempt(async () => { await api.editShortcuts(false); const initial = await api.initial(); fillSettings(initial.settings); render(initial.state); renderTabs(initial.tabs); if (initial.shortcutWarning) notice(initial.shortcutWarning); });

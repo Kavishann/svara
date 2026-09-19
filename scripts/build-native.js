@@ -15,4 +15,8 @@ if (process.platform === 'darwin') {
     '-DNODE_GYP_MODULE_NAME=svara_key_release', ...(test ? ['-DSVARA_NATIVE_TEST'] : []), '-I', include,
     '-framework', 'Carbon', 'src/native/key-release.c', '-o', `${directory}/key-release.node`], { stdio: 'inherit' });
   if (!test) await unlink('build/native/key-release').catch(error => { if (error.code !== 'ENOENT') throw error; });
+  execFileSync('xcrun', ['clang', '-O2', '-Wall', '-Wextra', '-Werror', '-fobjc-arc',
+    '-mmacosx-version-min=12.0', '-bundle', '-undefined', 'dynamic_lookup', '-DNAPI_VERSION=8',
+    '-DNODE_GYP_MODULE_NAME=svara_language', '-I', include, '-framework', 'Foundation', '-framework', 'NaturalLanguage',
+    'src/native/language.m', '-o', `${directory}/language.node`], { stdio: 'inherit' });
 }

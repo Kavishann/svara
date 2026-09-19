@@ -1,7 +1,7 @@
 {
   "name": "svara-browser",
   "productName": "Svara",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "A voice-guided browser for Sinhala speakers",
   "private": true,
   "type": "module",
@@ -18,7 +18,8 @@
     "prestart": "npm run build:native",
     "pretest:ui": "npm run build:native",
     "prebuild:mac": "npm run build:native",
-    "predist:mac": "npm run build:native"
+    "predist:mac": "npm run build:native",
+    "pretest": "npm run build:native"
   },
   "dependencies": {
     "@google-cloud/speech": "^8.1.0",
@@ -40,7 +41,10 @@
       "src/**/*",
       "package.json",
       "README.md",
-      "THIRD_PARTY_NOTICES.md"
+      "THIRD_PARTY_NOTICES.md",
+      "LICENSE",
+      "PRIVACY.md",
+      "SECURITY.md"
     ],
     "asarUnpack": [
       "node_modules/playwright*/**/*"
@@ -65,5 +69,6 @@
         "NSMicrophoneUsageDescription": "Svara listens to the commands you choose to record so you can browse the web by voice."
       }
     }
-  }
+  },
+  "license": "MIT"
 }

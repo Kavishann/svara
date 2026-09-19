@@ -4,7 +4,7 @@ A Mac desktop prototype for browsing through Sinhala speech. Svara controls a se
 
 ## Run on this Mac
 
-Requires macOS, Google Chrome, and Node.js 22 or newer for development.
+Requires macOS 13 or newer, Google Chrome, Node.js 22 or newer, and Xcode Command Line Tools for development (`xcode-select --install`). The current packaged build is for Apple Silicon; Intel builds have not been verified.
 
 ```sh
 npm ci
@@ -23,7 +23,9 @@ Open **Connections** to configure the live services. The packaged app does not r
 | Sinhala command → English for Jev; requested content translation | Gemini `gemini-3.8-flash` |
 | Choose an allowed browser action and target | TypeSafe `jev-1.13.0` |
 | Execute and inspect the browser | Playwright + Chrome |
-| Prepared text → spoken output, exclusively | Google Cloud TTS `gemini-2.5-flash-tts` |
+| English reading and item numbers | Apple local speech, Samantha voice |
+| Non-English and mixed-language speech | Google Cloud TTS `gemini-2.5-flash-tts` |
+| Detect reading language | Apple Natural Language, locally |
 
 Gemini 3.8 is restricted to language handling in this application. Gemini 2.5 Flash TTS receives only prepared text and a speaking-style instruction. Jev cannot generate arbitrary browser code. Familiar fixed commands and explicit UI controls run locally; natural-language requests use the translation and Jev pipeline.
 
@@ -50,7 +52,7 @@ API keys are encrypted with Electron `safeStorage` backed by macOS secure storag
 | Stop voice and cancel pending voice work | **Stop voice** button, **Escape** in Svara, **Control + Option + Escape** anywhere, or a custom Stop key |
 | Read a section | Results, Headings, Page text, or Links |
 | Move between titles | **↑ / ↓** (or **← / →**) while Page Reader is focused; Previous/Next buttons or custom keys |
-| Read the selected title | **R** in the focused reading list, **Read title**, or your custom Read key. Moving speaks only the item number in English, using the Mac’s built-in Samantha voice. |
+| Read the selected item | **R** in the focused reading list, **Read item**, or your custom Read key. Moving speaks only the item number in English, using the Mac’s built-in Samantha voice. |
 | Activate selected link | **Enter**, click its title, **Open this item**, or your custom Open key |
 | Translate selected passage | Read this in Sinhala; Read the original switches back |
 | Read five options | **Read first 5**, or say “read first five” / “මුල් පහ කියවන්න”. Reads from item 1 to at most item 5, then stops, even if continuous reading is enabled. |
@@ -58,11 +60,11 @@ API keys are encrypted with Electron `safeStorage` backed by macOS secure storag
 | Change speaking speed | Speed slider; implemented in audio playback |
 | Configure keyboard shortcuts | **Keyboard shortcuts** in the sidebar, or **Command + K** in Svara |
 
-Each new page or active tab brings Page Reader forward and selects its first title. YouTube Results contain video titles without channel names, view counts, or durations. Other pages prefer linked headings, then headings or readable text. “Read titles as I move” is off by default; moving announces just the item number using Apple speech, with no translation, internet connection, or API request. Enable the switch to read full titles instead. Rapid moves replace the previous number; Stop, Read title, and starting a recording interrupt it. A short tone is used if local speech is unavailable. Page updates preserve the selected link when it is still present. Svara leaves Connections and Keyboard shortcuts open while you edit them.
+Each new page or active tab brings Page Reader forward and selects its first title. YouTube Results contain video titles without channel names, view counts, or durations. Other pages prefer linked headings, then headings or readable text. “Read titles as I move” is off by default; moving announces just the item number using Apple speech, with no translation, internet connection, or API request. Enable the switch to read full titles instead. Rapid moves replace the previous number; Stop, Read item, and starting a recording interrupt it. A short tone is used if local speech is unavailable. Page updates preserve the selected link when it is still present. Svara leaves Connections and Keyboard shortcuts open while you edit them.
 
 At the last item, Svara looks for more results by scrolling or using a recognized Load more control. Moving past the end follows a recognized Next-page link or pagination button. New titles become available without a manual refresh. Site-specific controls, consent pages, or slow loading can still require manual help or another Next press.
 
-In **Keyboard shortcuts**, choose a key and optional extra keys for speaking, previous, next, opening, reading the selected title, and stopping voice. **Use single keys · F6–F12** selects F8 for speaking, F6 for previous, F7 for next, F9 for opening, F10 for reading, and F12 for stopping voice. Choose **Save and use shortcuts** to apply the choices immediately and return Home. Your choices are saved on this Mac and restored at startup; existing API connections are preserved. Home and spoken Help show the saved keys.
+In **Keyboard shortcuts**, choose a key and optional extra keys for Results, Headings, Page text, Links, selected-item reading, first-five reading, Sinhala/original reading, speaking, previous, next, opening, and stopping voice. **Use single keys · F2–F12** selects F2 Results, F3 Headings, F4 Page text, F5 Links, F6 Previous, F7 Next, F8 Speak, F9 Open, F10 Read, F11 First five, and F12 Stop. Sinhala/original reading keys are available to assign separately. Existing saved keys are preserved; new actions initially appear as Not assigned. Choose **Save and use shortcuts** to apply the choices immediately and return Home. Your choices are saved on this Mac and restored at startup; existing API connections are preserved. Home and spoken Help show the saved keys.
 
 Releasing the speaking key (or a required modifier) finishes recording and processes the command automatically. Escape cancels without sending. A release before the microphone is ready cancels that attempt; hold again after granting microphone permission. Each recording is limited to 45 seconds.
 
@@ -71,6 +73,8 @@ Custom shortcuts work across applications while Svara runs. Single letters, arro
 Commands include `open YouTube`, `search YouTube for ...`, `new tab`, `go back`, `read results`, `next`, `previous`, `repeat`, `read in Sinhala`, `read original`, `where am I`, `play`, `pause`, and `stop`. Sinhala fixed phrases are listed under Help & commands. Conversational Sinhala and mixed-language phrases are translated by Gemini before Jev evaluates them.
 
 Recordings are capped at 45 seconds and submitted after the user finishes. This is not word-by-word streaming recognition: Sinhala is not listed in Chirp 2's documented streaming-language set. Select the expected input language in Connections. Mixed Sinhala–English accuracy needs evaluation with actual speakers.
+
+English reading is detected locally from the actual text, including on pages whose language label is wrong. Latin-script text identified as English uses Apple speech; Sinhala, mixed scripts, other detected languages, and unidentified text use the cloud path. Very short names, mixed Latin-script languages, and romanized Sinhala can be ambiguous and still need evaluation with users. English practice reading works offline; non-English practice speech remains off.
 
 ## Behavior and boundaries
 
@@ -117,3 +121,9 @@ Reader regression tests use local fixtures for YouTube title layouts, AJAX repla
 See `THIRD_PARTY_NOTICES.md` for reference attribution.
 
 Hold-to-talk uses a bundled Node-API module built with Xcode Command Line Tools by `npm start` and the Mac build scripts. It pairs the Carbon press and release events for Electron’s registered shortcut ID. It does not poll ordinary keyboard state, capture typed text, or install a global keyboard event tap. The release handler is refreshed after shortcut registration or editing changes. The native regression test uses events inside its own process; it does not generate system keyboard input.
+
+## Open-source release
+
+Licensed under [MIT](LICENSE). See [CONTRIBUTING.md](CONTRIBUTING.md), [PRIVACY.md](PRIVACY.md), and [SECURITY.md](SECURITY.md). Provider access is supplied separately by each user; this project does not include free hosted speech or shared credentials.
+
+Publish as an early macOS prototype until keyboard-only setup, physical hold-to-talk, Sinhala/mixed-language quality, and common websites have been tested by blind Sinhala users on clean Macs. Before opening the repository, review staged files and history and remove private issue attachments. Verify GitHub secret protection settings, review any [secret-scanning alerts](https://docs.github.com/en/code-security/how-tos/secure-your-secrets/detect-secret-leaks/enable-secret-scanning), and enable private vulnerability reporting. Before uploading an app binary, [sign and notarize it](https://developer.apple.com/developer-id/), verify the packaged notices and native helpers, and test installation on a Mac without the development environment.

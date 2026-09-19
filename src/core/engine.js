@@ -305,7 +305,8 @@ export class Engine extends EventEmitter {
     });
   }
   async perform(action, command, epoch, signal) {
-    const scopes = { read_results: 'results', read_headings: 'headings', read_page: 'article', read_links: 'links' };
+    const scopes = { read_results: 'results', read_headings: 'headings', read_page: 'article', read_links: 'links',
+      show_results: 'results', show_headings: 'headings', show_page: 'article', show_links: 'links' };
     if (action === 'read_first_five') {
       if (this.pending) throw new Error('Confirm or cancel the pending choice before reading the first five items.');
       this.update('working', 'Collecting the first five items…');
@@ -320,7 +321,10 @@ export class Engine extends EventEmitter {
       this.update('working', 'Collecting page content…');
       this.snapshot = await this.browser.snapshot(); this.current(epoch);
       this.reader.load(this.snapshot, scopes[action]); this.reader.index = this.reader.items.length ? 0 : -1;
-      this.focusReader(); await this.read(epoch, signal); this.preloadTail();
+      this.update('ready'); this.focusReader(true);
+      if (action.startsWith('read_') || this.settings().readOnFocus !== false) await this.read(epoch, signal);
+      else this.announcePosition();
+      this.preloadTail();
     } else if (['next', 'previous'].includes(action)) {
       await this.moveReader(action === 'next' ? 1 : -1, epoch, signal);
     } else if (action === 'repeat') await this.read(epoch, signal);

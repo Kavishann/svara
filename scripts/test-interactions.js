@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 export async function testInteractions(app, window) {
   const initial = await window.evaluate(() => window.svara.initial());
   await app.evaluate(({ ipcMain, BrowserWindow }, state) => {
-    globalThis.svaraInteractionTest = { submissions: 0, synthesized: [], positions: 0 };
+    globalThis.svaraInteractionTest = { submissions: 0, synthesized: [], spoken: [], positions: 0 };
     ipcMain.removeHandler('speak-position');
     ipcMain.handle('speak-position', () => { globalThis.svaraInteractionTest.positions++; return { ok: true }; });
     ipcMain.removeHandler('microphone-permission');
@@ -84,6 +84,7 @@ export async function testInteractions(app, window) {
     ipcMain.removeHandler('synthesize');
     ipcMain.handle('synthesize', (_event, request) => {
       globalThis.svaraInteractionTest.synthesized.push(request.text);
+      globalThis.svaraInteractionTest.spoken.push(request.text);
       return { ok: true, value: 'AA==' };
     });
   });
@@ -103,28 +104,30 @@ export async function testInteractions(app, window) {
   await window.waitForFunction(() => document.querySelector('#speaking-indicator').hidden && document.querySelectorAll('.item-button').length > 5);
   await window.locator('#read-on-focus').uncheck();
   await window.waitForFunction(async () => (await window.svara.initial()).settings.readOnFocus === false);
-  await app.evaluate(() => { globalThis.svaraInteractionTest.synthesized = []; });
+  await app.evaluate(() => { globalThis.svaraInteractionTest.synthesized = []; globalThis.svaraInteractionTest.spoken = []; });
   await window.locator('.item-button').first().focus();
   await window.keyboard.press('ArrowDown');
   await window.waitForFunction(() => document.activeElement?.dataset.itemIndex === '1');
   assert.equal((await app.evaluate(() => globalThis.svaraInteractionTest.synthesized)).length, 0);
   await phase('read');
   await window.waitForFunction(() => document.querySelector('#status-message').textContent.startsWith('2.') && document.querySelector('#speaking-indicator').hidden);
-  assert.equal((await app.evaluate(() => globalThis.svaraInteractionTest.synthesized)).length, 1);
-  await app.evaluate(() => { globalThis.svaraInteractionTest.synthesized = []; });
+  assert.equal((await app.evaluate(() => globalThis.svaraInteractionTest.spoken)).length, 1);
+  assert.equal((await app.evaluate(() => globalThis.svaraInteractionTest.synthesized)).length, 0, 'English selected reading stays on the Mac');
+  await app.evaluate(() => { globalThis.svaraInteractionTest.synthesized = []; globalThis.svaraInteractionTest.spoken = []; });
   await window.locator('#continuous').check();
   await window.locator('#read-first-five').click();
   await window.waitForFunction(() => document.querySelector('#position').textContent.startsWith('5 /') && document.querySelector('#speaking-indicator').hidden);
-  const spoken = await app.evaluate(() => globalThis.svaraInteractionTest.synthesized);
+  const spoken = await app.evaluate(() => globalThis.svaraInteractionTest.spoken);
   assert.equal(spoken.length, 5);
   assert.deepEqual(spoken.map(text => Number(text.match(/^\d+/)[0])), [1, 2, 3, 4, 5]);
   await window.evaluate(() => { window.svaraFakePlayback.automatic = false; });
-  await app.evaluate(() => { globalThis.svaraInteractionTest.synthesized = []; });
+  await app.evaluate(() => { globalThis.svaraPositionTest.manual = true; });
+  await app.evaluate(() => { globalThis.svaraInteractionTest.synthesized = []; globalThis.svaraInteractionTest.spoken = []; });
   await window.locator('#read-first-five').click();
   await window.waitForFunction(() => !document.querySelector('#speaking-indicator').hidden);
   await window.locator('#stop-all').click();
   await window.evaluate(() => { window.svaraFakePlayback.waiting.forEach(done => done()); });
-  assert.equal((await app.evaluate(() => globalThis.svaraInteractionTest.synthesized)).length, 1);
+  assert.equal((await app.evaluate(() => globalThis.svaraInteractionTest.spoken)).length, 1);
   assert.match(await window.locator('#position').textContent(), /^1 \//);
   console.log('Hold/release, repeat suppression, Escape, button keyboard/mouse release, five-item playback cap with continuous enabled, and playback interruption passed with simulated audio.');
 }

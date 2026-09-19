@@ -11,6 +11,8 @@ import { ShortcutManager } from './shortcuts.js';
 import { STOP_SHORTCUT } from './core/shortcuts.js';
 import { createReleaseWatcher } from './key-release.js';
 import { positionSpeech } from './position-speech.js';
+import { LocalReading } from './local-reading.js';
+import { speechRoute } from './core/speech-route.js';
 import { createRequire } from 'node:module';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -35,14 +37,27 @@ function handle(name, fn) {
 app.whenReady().then(async () => {
 settings = new Settings(app.getPath('userData'), safeStorage); await settings.load();
 const google = new GoogleServices(() => settings.data);
+const nativeDirectory = app.isPackaged ? path.join(process.resourcesPath, 'native') : path.join(root, '../build/native');
+const languageDetector = createRequire(import.meta.url)(path.join(nativeDirectory, 'language.node'));
+const localReading = new LocalReading();
+const routeCache = new Map();
+const routeSpeech = (text, language) => {
+  if (typeof text !== 'string' || !text.trim() || Buffer.byteLength(text) > 12000 || typeof language !== 'string' || language.length > 35) throw new Error('Use a short reading passage.');
+  const key = language + ':' + text;
+  if (!routeCache.has(key)) {
+    if (routeCache.size >= 200) routeCache.clear();
+    routeCache.set(key, speechRoute(text, language, value => languageDetector.identify(value)));
+  }
+  return routeCache.get(key);
+};
 browser = new BrowserController({ directory: app.getPath('userData'), headless: process.env.SVARA_TEST_HEADLESS === '1',
   practiceDirectory: app.isPackaged ? path.join(process.resourcesPath, 'practice') : undefined,
   onChange: () => { browser.tabs().then(tabs => send('tabs', tabs)).catch(() => {}); engine?.browserChanged(); } });
 const jev = new JevService(() => settings.data);
 engine = new Engine({ browser, google, jev, settings: () => settings.data });
 positionSpeech.onFailure = () => send('navigation-tone');
-engine.on('stop', () => positionSpeech.stop());
-engine.on('narration', () => positionSpeech.stop());
+engine.on('stop', () => { positionSpeech.stop(); localReading.stop(); });
+engine.on('narration', () => { positionSpeech.stop(); localReading.stop(); });
 const releaseModule = app.isPackaged ? path.join(process.resourcesPath, 'native/key-release.node') : path.join(root, '../build/native/key-release.node');
 const watchRelease = createReleaseWatcher(createRequire(import.meta.url)(releaseModule));
 const shortcuts = new ShortcutManager(globalShortcut, action => {
@@ -78,7 +93,7 @@ handle('shortcuts-save', async input => {
 handle('shortcuts-editing', value => {
   if (typeof value !== 'boolean') throw new Error('Choose a shortcut setting.');
   shortcuts.setEditing(value);
-  if (value) positionSpeech.stop();
+  if (value) { positionSpeech.stop(); localReading.stop(); }
 });
 handle('credentials-file', async () => {
   const result = await dialog.showOpenDialog(window, { title: 'Choose Google Cloud credentials', properties: ['openFile'], filters: [{ name: 'Google service account JSON', extensions: ['json'] }] });
@@ -108,6 +123,7 @@ handle('command', text => { if (typeof text !== 'string') throw new Error('Enter
 const allowed = new Set(['stop', 'select', 'open_item', 'open_current', 'confirm', 'choose', 'switch_tab', 'next', 'previous', 'repeat', 'read_results', 'read_headings', 'read_page', 'read_links', 'read_sinhala', 'read_original', 'where', 'help', 'back', 'forward', 'reload', 'new_tab', 'close_tab', 'next_tab', 'previous_tab', 'scroll_down', 'scroll_up', 'play', 'pause']);
 allowed.add('read_first_five');
 for (const action of ['focus_item', 'focus_next', 'focus_previous']) allowed.add(action);
+for (const action of ['show_results', 'show_headings', 'show_page', 'show_links']) allowed.add(action);
 handle('continue-reading', (epoch, index) => {
   if (!Number.isSafeInteger(epoch) || !Number.isInteger(index) || index < 0 || index > 4) throw new Error('That reading request is no longer available.');
   return engine.continueReading(epoch, index);
@@ -136,6 +152,15 @@ handle('synthesize', async ({ text, language, epoch }) => {
   if (browser.practice || !settings.data.speechEnabled) return null;
   const audio = await google.synthesize(text, language); engine.current(epoch); return audio;
 });
+handle('speech-route', ({ text, language, epoch }) => { engine.current(epoch); return routeSpeech(text, language); });
+handle('speak-local', async ({ text, language, epoch }) => {
+  engine.current(epoch);
+  if (!settings.data.speechEnabled || !routeSpeech(text, language).local) return false;
+  positionSpeech.stop();
+  const completed = await localReading.play(text, settings.data.rate);
+  engine.current(epoch); return completed;
+});
+handle('stop-local-speech', () => localReading.stop());
 handle('voice-test', () => engine.run(async epoch => {
   if (browser.practice) await browser.startLive();
   engine.current(epoch);
@@ -154,7 +179,7 @@ if (!globalShortcut.register(STOP_SHORTCUT, () => { engine.stop(); send('cancel-
   shortcutWarning += ' The stop shortcut is unavailable. Escape still stops reading inside Svara.';
 }
 watchRelease.refresh();
-window.webContents.on('render-process-gone', () => { positionSpeech.stop(); shortcuts.cancelHold(); shortcuts.setEditing(false); });
+window.webContents.on('render-process-gone', () => { positionSpeech.stop(); localReading.stop(); shortcuts.cancelHold(); shortcuts.setEditing(false); });
 await window.loadFile(rendererFile);
 app.on('activate', () => { if (window && !window.isDestroyed()) window.show(); });
 app.on('window-all-closed', () => app.quit());

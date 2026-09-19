@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('svara', {
   continueReading: (epoch, index) => call('continue-reading', epoch, index),
   openSite: site => call('open-site', site), microphonePermission: () => call('microphone-permission'),
   audio: data => call('audio', data), synthesize: request => call('synthesize', request), voiceTest: () => call('voice-test'),
+  speechRoute: request => call('speech-route', request), speakLocal: request => call('speak-local', request), stopLocalSpeech: () => call('stop-local-speech'),
   onState: cb => subscribe('state', cb), onTabs: cb => subscribe('tabs', cb), onNarration: cb => subscribe('narration', cb),
   onStop: cb => subscribe('stop', cb), onNotice: cb => subscribe('notice', cb), onNavigate: cb => subscribe('navigate', cb),
   onReaderFocus: cb => subscribe('reader-focus', cb),
