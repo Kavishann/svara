@@ -95,7 +95,7 @@ export class Engine extends EventEmitter {
   async adoptPage(snapshot, epoch, signal, raise = true) {
     this.snapshot = snapshot; this.pending = null; this.autoScope = true; this.moreTried.clear();
     this.reader.load(snapshot, this.preferredScope(snapshot)); this.reader.index = this.reader.items.length ? 0 : -1;
-    this.update('ready', snapshot.title); this.focusReader(raise);
+    this.update('ready', snapshot.title); this.focusReader(raise && !snapshot.manual);
     if (this.reader.current() && this.settings().readOnFocus !== false) await this.read(epoch, signal);
     else this.announcePosition();
     this.preloadTail();
@@ -305,6 +305,12 @@ export class Engine extends EventEmitter {
     });
   }
   async perform(action, command, epoch, signal) {
+    if (['play', 'pause', 'media_toggle'].includes(action)) {
+      const result = await this.browser.execute(action, command, signal); this.current(epoch);
+      // Short local English feedback avoids a cloud request for a transport key.
+      this.say(result.media === 'paused' ? 'Media paused.' : 'Media playing.', 'en-US');
+      return;
+    }
     const scopes = { read_results: 'results', read_headings: 'headings', read_page: 'article', read_links: 'links',
       show_results: 'results', show_headings: 'headings', show_page: 'article', show_links: 'links' };
     if (action === 'read_first_five') {
@@ -338,7 +344,7 @@ export class Engine extends EventEmitter {
     else if (action === 'stop') this.stop();
     else {
       this.update('working', 'Updating your browser…');
-      await this.browser.execute(action, command); this.current(epoch); await this.afterAction(action, epoch, signal);
+      await this.browser.execute(action, command, signal); this.current(epoch); await this.afterAction(action, epoch, signal);
     }
   }
   async control(action, index) {
@@ -361,7 +367,7 @@ export class Engine extends EventEmitter {
       } else if (action === 'confirm') await this.confirmPending(epoch);
       else if (action === 'choose') await this.chooseCandidate(index, epoch);
       else if (action === 'switch_tab') {
-        await this.browser.switchTab(index); this.current(epoch); await this.afterAction('next_tab', epoch, signal);
+        await this.browser.switchTab(index, signal); this.current(epoch); await this.afterAction('next_tab', epoch, signal);
       } else await this.perform(action, {}, epoch, signal);
     }, { keepMore: ['select', 'focus_item', 'focus_next', 'focus_previous', 'next', 'previous', 'repeat'].includes(action) });
   }

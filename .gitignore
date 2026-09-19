@@ -19,3 +19,4 @@ settings.json.tmp
 coverage/
 build/native/
 build/native-tests/
+build/chrome-extension/

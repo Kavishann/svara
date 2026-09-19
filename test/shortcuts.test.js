@@ -20,6 +20,8 @@ function platform() {
 test('shortcut validation supports single keys and rejects duplicate or reserved assignments', () => {
   assert.deepEqual(normalizeShortcuts(SINGLE_KEY_SHORTCUTS), SINGLE_KEY_SHORTCUTS);
   assert.equal(normalizeShortcuts(config({ speak: 'Alt+Control+Space' })).bindings.speak, 'Control+Alt+Space');
+  assert.equal(normalizeShortcuts(config({ speak: 'Control+Space' })).bindings.media_toggle, '');
+  assert.throws(() => normalizeShortcuts(config({ speak: 'F8', media_toggle: 'F8' })), /assigned twice/);
   assert.throws(() => normalizeShortcuts(config({ speak: 'F8', next: 'F8' })), /assigned twice/);
   assert.throws(() => normalizeShortcuts(config({ speak: 'Alt+Control+Space', next: 'Control+Alt+Space' })), /assigned twice/);
   for (const speak of ['Escape', 'Control+Alt+Escape', 'Command+Q', 'Command+C', 'Command+K', 'Fn', 'Control+Control+A', 'A+B']) {
@@ -99,4 +101,20 @@ test('legacy four-key preferences migrate and the added Read/Stop actions dispat
   api.press('F10'); api.press('F12'); assert.deepEqual(actions, ['read', 'stop']);
   assert.throws(() => normalizeShortcuts(config({ read: 'F10', stop: 'F10' })), /assigned twice/);
   assert.equal(new Settings('/unused', {}).data.readOnFocus, false);
+});
+
+test('overlapping speaking and media keys keep the original release watcher and suppress repeats', () => {
+  const api = platform(), actions = [], watched = []; let release;
+  const manager = new ShortcutManager(api, action => actions.push(action), (key, done) => {
+    watched.push(key); release = done; return () => {};
+  });
+  manager.start(config({ speak: 'F8', media_toggle: 'F9' }));
+  api.press('F8'); api.press('F9'); api.press('F8');
+  assert.deepEqual(watched, ['F8']); release();
+  assert.deepEqual(actions, ['speak-start', 'speak-end']);
+  api.press('F9'); api.press('F9'); api.press('F8');
+  assert.deepEqual(watched, ['F8', 'F9']); release();
+  assert.deepEqual(actions, ['speak-start', 'speak-end', 'media_toggle']);
+  api.press('F8'); release();
+  assert.deepEqual(actions.slice(-2), ['speak-start', 'speak-end']);
 });

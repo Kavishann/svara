@@ -165,4 +165,20 @@ export async function testInteractions(app, window) {
   assert.equal(await window.evaluate(() => window.svaraFakePlayback.started), 1, 'Late chunks after Stop cannot play');
   assert.match(await window.locator('#position').textContent(), /^1 \//);
   console.log('Hold/release, repeat suppression, five-item playback cap, streaming before completion, and immediate cancellation passed with simulated audio.');
+  // Check the renderer-to-main media shortcut route after the other controls.
+  await app.evaluate(({ ipcMain }, state) => {
+    globalThis.svaraMediaActions = [];
+    ipcMain.removeHandler('control');
+    ipcMain.handle('control', (_event, action) => {
+      globalThis.svaraMediaActions.push(action);
+      return { ok: true, value: state };
+    });
+  }, initial.state);
+  await phase('media_toggle');
+  await window.waitForFunction(() => document.querySelector('#status-message').textContent.length > 0);
+  await app.evaluate(async () => {
+    const deadline = Date.now() + 2000;
+    while (!globalThis.svaraMediaActions.length && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+  });
+  assert.deepEqual(await app.evaluate(() => globalThis.svaraMediaActions), ['media_toggle']);
 }

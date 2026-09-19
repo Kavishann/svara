@@ -159,15 +159,29 @@ export class BrowserController {
     } else if (action === 'reload') await p.reload({ waitUntil: 'domcontentloaded' });
     else if (action === 'scroll_down' || action === 'scroll_up') {
       await p.evaluate(direction => window.scrollBy({ top: innerHeight * 0.8 * direction, behavior: 'instant' }), action === 'scroll_down' ? 1 : -1);
-    } else if (action === 'play' || action === 'pause') {
-      const status = await p.evaluate(async shouldPlay => {
-        const media = document.querySelector('video,audio');
-        if (!media) return 'missing';
-        if (shouldPlay) await media.play(); else media.pause();
-        return media.paused ? 'paused' : 'playing';
-      }, action === 'play');
+    } else if (['play', 'pause', 'media_toggle'].includes(action)) {
+      const status = await p.evaluate(async action => {
+        const media = [...document.querySelectorAll('video,audio')];
+        const playable = media.filter(item => item.currentSrc || item.src || item.srcObject || item.querySelector('source[src]'));
+        if (!playable.length) return 'missing';
+        const playing = playable.filter(item => !item.paused && !item.ended);
+        const shouldPlay = action === 'play' || (action === 'media_toggle' && !playing.length);
+        const remembered = (window.__svaraPausedMedia || []).filter(item => playable.includes(item));
+        if (!shouldPlay) {
+          if (playing.length) window.__svaraPausedMedia = playing;
+          playing.forEach(item => item.pause());
+          return playing.every(item => item.paused) ? 'paused' : 'unchanged';
+        }
+        if (playing.length) return 'playing';
+        const targets = remembered.length ? remembered : [playable[0]];
+        // Keep the group for retry if the site rejects one of the play calls.
+        window.__svaraPausedMedia = targets;
+        const results = await Promise.allSettled(targets.map(item => item.play()));
+        return results.every(result => result.status === 'fulfilled') && targets.every(item => !item.paused) ? 'playing' : 'unchanged';
+      }, action);
       if (status === 'missing') throw new Error('There is no playable video or audio on this page.');
-      if (status !== (action === 'play' ? 'playing' : 'paused')) throw new Error('Playback did not change. The website may need an extra selection.');
+      if (status === 'unchanged') throw new Error('Playback did not change. The website may need an extra selection.');
+      return { media: status };
     } else throw new Error('That browser action is not available.');
     return this.snapshot();
   }

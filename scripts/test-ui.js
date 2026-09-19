@@ -110,6 +110,8 @@ try {
   await window.getByRole('button', { name: 'Save and use shortcuts', exact: true }).click();
   await window.waitForFunction(() => document.querySelector('#shortcut-status').textContent.includes('assigned twice'));
   await window.locator('#shortcut-next-key').selectOption('F7');
+  assert.equal(await window.locator('#shortcut-media_toggle-key').inputValue(), '');
+  await window.locator('#shortcut-media_toggle-key').selectOption('F1');
   await audit('Keyboard shortcuts');
   await window.locator('#main').focus();
   await window.evaluate(() => window.scrollTo(0, 0));
@@ -117,7 +119,7 @@ try {
   await window.getByRole('button', { name: 'Save and use shortcuts', exact: true }).click();
   await window.waitForSelector('#view-home:not([hidden])');
   assert.equal(await app.evaluate(({ globalShortcut }) => globalShortcut.isSuspended()), false);
-  assert.equal(await app.evaluate(({ globalShortcut }) => ['F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12'].every(key => globalShortcut.isRegistered(key))), true);
+  assert.equal(await app.evaluate(({ globalShortcut }) => ['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12'].every(key => globalShortcut.isRegistered(key))), true);
   assert.equal(await window.locator('.hero [data-shortcut-hint="speak"]').textContent(), 'F8');
   for (const [action, scope] of [['headings', 'headings'], ['page_text', 'article'], ['links', 'links'], ['results', 'results']]) {
     await app.evaluate(({ BrowserWindow }, value) => BrowserWindow.getAllWindows()[0].webContents.send('shortcut-action', value), action);
@@ -137,10 +139,12 @@ try {
   assert.equal(await window.locator('#shortcut-next-key').inputValue(), 'F7');
   assert.equal(await window.locator('#shortcut-headings-key').inputValue(), 'F3');
   assert.equal(await window.locator('#shortcut-first_five-key').inputValue(), 'F11');
+  assert.equal(await window.locator('#shortcut-media_toggle-key').inputValue(), 'F1');
   await window.locator('#shortcuts-enabled').uncheck();
   await window.getByRole('button', { name: 'Save and use shortcuts', exact: true }).click();
   await window.waitForSelector('#view-home:not([hidden])');
   assert.equal(await app.evaluate(({ globalShortcut }) => globalShortcut.isRegistered('F8')), false);
+  assert.equal(await app.evaluate(({ globalShortcut }) => globalShortcut.isRegistered('F1')), false);
   await window.getByRole('button', { name: 'Home', exact: true }).click();
   await window.locator('#command-input').fill('next');
   await window.getByRole('button', { name: 'Send command', exact: true }).click();

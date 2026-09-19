@@ -1,7 +1,7 @@
 {
   "name": "svara-browser",
   "productName": "Svara",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "A voice-guided browser for Sinhala speakers",
   "private": true,
   "type": "module",
@@ -11,15 +11,17 @@
     "test": "node --test test/*.test.js",
     "test:ui": "node scripts/test-ui.js",
     "check": "node scripts/check.js",
-    "build:mac": "electron-builder --mac dir",
-    "dist:mac": "electron-builder --mac dmg",
+    "build:mac": "electron-builder --mac dir --publish never",
+    "dist:mac": "electron-builder --mac dmg --publish never",
     "browser:install": "playwright install chromium",
     "build:native": "node scripts/build-native.js",
-    "prestart": "npm run build:native",
-    "pretest:ui": "npm run build:native",
-    "prebuild:mac": "npm run build:native",
-    "predist:mac": "npm run build:native",
-    "pretest": "npm run build:native"
+    "prestart": "npm run build:native && npm run build:extension",
+    "pretest:ui": "npm run build:native && npm run build:extension",
+    "prebuild:mac": "npm run build:native && npm run build:extension",
+    "predist:mac": "npm run build:native && npm run build:extension",
+    "pretest": "npm run build:native && npm run build:extension",
+    "verify:mac": "node scripts/verify-mac.js",
+    "build:extension": "node scripts/build-extension.js"
   },
   "dependencies": {
     "@google-cloud/speech": "^8.1.0",
@@ -57,6 +59,14 @@
       {
         "from": "build/native",
         "to": "native"
+      },
+      {
+        "from": "build/chrome-extension",
+        "to": "chrome-extension"
+      },
+      {
+        "from": "src/native-host.cjs",
+        "to": "native-host.cjs"
       }
     ],
     "mac": {
@@ -67,8 +77,16 @@
       ],
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Svara listens to the commands you choose to record so you can browse the web by voice."
-      }
-    }
+      },
+      "identity": "-",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": false,
+      "strictVerify": true
+    },
+    "forceCodeSigning": true,
+    "afterSign": "scripts/verify-mac.js"
   },
   "license": "MIT"
 }

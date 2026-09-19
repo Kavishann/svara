@@ -15,7 +15,7 @@ test('Mac native event chain keeps a shortcut held until its own release, includ
   const manager = new ShortcutManager(api, action => actions.push(action), watch);
   const flush = () => new Promise(resolve => setTimeout(resolve, 30));
   try {
-    manager.start(SINGLE_KEY_SHORTCUTS);
+    manager.start({ ...SINGLE_KEY_SHORTCUTS, bindings: { ...SINGLE_KEY_SHORTCUTS.bindings, media_toggle: 'F1' } });
     assert.throws(() => native.arm(), /key-press event/);
     native.testDeliver(5, 100, callbacks.get('F8'));
     await flush(); assert.deepEqual(actions, ['speak-start']);
@@ -36,5 +36,19 @@ test('Mac native event chain keeps a shortcut held until its own release, includ
     // Refreshing the hook does not lose the ID of an ongoing recording.
     native.testDeliver(5, 202, callbacks.get('F8'));
     watch.refresh(); native.testDeliver(6, 202); await flush(); assert.equal(actions.at(-1), 'speak-end');
+    const beforeMedia = actions.length;
+    native.testDeliver(5, 300, callbacks.get('F1'));
+    native.testDeliver(5, 300, callbacks.get('F1'));
+    native.testDeliver(6, 301); await flush();
+    assert.deepEqual(actions.slice(beforeMedia), ['media_toggle']);
+    native.testDeliver(6, 300); await flush();
+    native.testDeliver(5, 300, callbacks.get('F1'));
+    native.testDeliver(6, 300); await flush();
+    assert.deepEqual(actions.slice(beforeMedia), ['media_toggle', 'media_toggle']);
+    native.testDeliver(5, 300, callbacks.get('F1'));
+    manager.setEditing(true); native.testDeliver(6, 300); await flush();
+    manager.setEditing(false); native.testDeliver(5, 300, callbacks.get('F1'));
+    native.testDeliver(6, 300); await flush();
+    assert.deepEqual(actions.slice(beforeMedia), Array(4).fill('media_toggle'));
   } finally { manager.cancelHold(); watch.close(); }
 });

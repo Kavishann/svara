@@ -102,6 +102,12 @@ function renderTabs(data) {
     button.setAttribute('aria-pressed', String(tab.active)); button.onclick = () => control('switch_tab', tab.id); return button;
   }));
 }
+function renderChrome(data) {
+  $('#chrome-status').textContent = data.testing ? 'Practice and test browser.' : data.connected ? 'Chrome is connected. Your browsing controls are ready.' : 'Chrome is not connected yet. Complete the one-time setup below.';
+}
+$('#chrome-setup').onclick = () => attempt(async () => renderChrome(await api.setupChrome()));
+$('#chrome-connect').onclick = () => attempt(async () => { render(await api.connectChrome()); renderChrome(await api.chromeStatus()); });
+api.onChromeStatus(renderChrome);
 function fillSettings(data) {
   settings = data;
   for (const [selector, key] of Object.entries({ '#project-id': 'projectId', '#region': 'region', '#input-language': 'inputLanguage', '#voice': 'voice', '#guidance-language': 'guidanceLanguage', '#rate': 'rate' })) $(selector).value = data[key];
@@ -336,12 +342,13 @@ api.onShortcut(action => {
     return;
   }
   if (action === 'speak-start') { startRecording('shortcut'); return; }
+  if (action === 'media-unavailable') { notice('The media key could not be tracked. Restart Svara, or use the Play and Pause buttons.'); return; }
   const controls = { open: 'open_current', read: 'repeat', next: 'focus_next', previous: 'focus_previous',
     results: 'show_results', headings: 'show_headings', page_text: 'show_page', links: 'show_links',
-    first_five: 'read_first_five', read_sinhala: 'read_sinhala', read_original: 'read_original' };
+    first_five: 'read_first_five', read_sinhala: 'read_sinhala', read_original: 'read_original', media_toggle: 'media_toggle' };
   if (!controls[action]) return;
   if (recording.active) { notice('Finish speaking before using the reading shortcuts.'); return; }
   if (state.pending) { notice('Confirm or cancel the pending choice before using the reading shortcuts.'); return; }
   control(controls[action]);
 });
-await attempt(async () => { await api.editShortcuts(false); const initial = await api.initial(); fillSettings(initial.settings); render(initial.state); renderTabs(initial.tabs); if (initial.shortcutWarning) notice(initial.shortcutWarning); });
+await attempt(async () => { await api.editShortcuts(false); const initial = await api.initial(); fillSettings(initial.settings); render(initial.state); renderTabs(initial.tabs); renderChrome(initial.chrome); if (initial.shortcutWarning) notice(initial.shortcutWarning); });

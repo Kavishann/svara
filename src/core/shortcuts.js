@@ -5,6 +5,7 @@ export const SHORTCUT_ACTIONS = {
   open: { label: 'Open current item', sinhala: 'තෝරාගත් අයිතමය විවෘත කරන්න' },
   read: { label: 'Read selected item', sinhala: 'තෝරාගත් අයිතමය කියවන්න' },
   stop: { label: 'Stop voice', sinhala: 'හඬ නවත්වන්න' },
+  media_toggle: { label: 'Pause / resume media', sinhala: 'වීඩියෝ හෝ සංගීතය නවත්වන්න / නැවත ධාවනය කරන්න' },
   results: { label: 'Switch to results', sinhala: 'ප්‍රතිඵල වෙත යන්න' },
   headings: { label: 'Switch to headings', sinhala: 'ශීර්ෂ වෙත යන්න' },
   page_text: { label: 'Switch to page text', sinhala: 'පිටුවේ පෙළ වෙත යන්න' },
@@ -14,7 +15,7 @@ export const SHORTCUT_ACTIONS = {
   read_original: { label: 'Read original language', sinhala: 'මුල් භාෂාවෙන් කියවන්න' }
 };
 export const STOP_SHORTCUT = 'Control+Alt+Escape';
-export const DEFAULT_SHORTCUTS = { enabled: true, bindings: { speak: 'Control+Alt+Space', previous: '', next: '', open: '', read: '', stop: '', results: '', headings: '', page_text: '', links: '', first_five: '', read_sinhala: '', read_original: '' } };
+export const DEFAULT_SHORTCUTS = { enabled: true, bindings: { speak: 'Control+Alt+Space', previous: '', next: '', open: '', read: '', stop: '', media_toggle: '', results: '', headings: '', page_text: '', links: '', first_five: '', read_sinhala: '', read_original: '' } };
 export const SINGLE_KEY_SHORTCUTS = { enabled: true, bindings: { ...DEFAULT_SHORTCUTS.bindings, speak: 'F8', previous: 'F6', next: 'F7', open: 'F9', read: 'F10', stop: 'F12', results: 'F2', headings: 'F3', page_text: 'F4', links: 'F5', first_five: 'F11' } };
 export const SHORTCUT_KEYS = ['Space', 'Enter', 'Up', 'Down', 'Left', 'Right', 'Home', 'End', 'PageUp', 'PageDown',
   ...Array.from({ length: 24 }, (_, i) => `F${i + 1}`), ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'];

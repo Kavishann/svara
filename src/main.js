@@ -1,9 +1,14 @@
-import { app, BrowserWindow, ipcMain, Menu, globalShortcut, dialog, safeStorage, systemPreferences, session } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, globalShortcut, dialog, safeStorage, systemPreferences, session, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { Settings } from './settings.js';
 import { BrowserController } from './browser/browser.js';
+import { ConnectedBrowser } from './browser/connected-browser.js';
+import { ChromeBridge } from './browser/bridge.js';
+import { installChromeHost } from './browser/chrome-setup.js';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { GoogleServices } from './services/google.js';
 import { JevService } from './services/jev.js';
 import { Engine } from './core/engine.js';
@@ -19,6 +24,7 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const rendererFile = path.join(root, 'renderer/index.html');
 if (process.env.SVARA_TEST_USER_DATA) app.setPath('userData', process.env.SVARA_TEST_USER_DATA);
 app.setName('Svara');
+if (!process.env.SVARA_TEST_USER_DATA && !app.requestSingleInstanceLock()) app.quit();
 let window, settings, browser, engine;
 let quitting = false;
 const send = (type, data) => { if (window && !window.isDestroyed()) window.webContents.send(type, data); };
@@ -56,7 +62,30 @@ const routeSpeech = (text, language) => {
   }
   return routeCache.get(key);
 };
-browser = new BrowserController({ directory: app.getPath('userData'), headless: process.env.SVARA_TEST_HEADLESS === '1',
+const testBrowser = process.env.SVARA_TEST_HEADLESS === '1';
+let chromeSetup, chromeBridge, chromeWasConnected = false;
+const chromeMarker = path.join(app.getPath('userData'), 'chrome-connected');
+const openChrome = async (url = '') => {
+  await promisify(execFile)('/usr/bin/open', ['-a', 'Google Chrome', ...(url ? [url] : [])]);
+};
+const wakeChrome = () => openChrome(chromeWasConnected && !chromeBridge?.connected
+  ? `chrome-extension://${chromeSetup.extensionId}/welcome.html#reconnect` : '');
+if (!testBrowser) {
+  const extensionDirectory = app.isPackaged ? path.join(process.resourcesPath, 'chrome-extension') : path.join(root, '../build/chrome-extension');
+  const identity = JSON.parse(await fs.readFile(path.join(extensionDirectory, 'identity.json'), 'utf8'));
+  chromeBridge = new ChromeBridge({ directory: app.getPath('userData'), extensionId: identity.id });
+  await chromeBridge.start();
+  chromeSetup = await installChromeHost({ directory: app.getPath('userData'), executable: process.execPath,
+    relayPath: app.isPackaged ? path.join(process.resourcesPath, 'native-host.cjs') : path.join(root, 'native-host.cjs'),
+    extensionDirectory, socketPath: chromeBridge.socketPath });
+  chromeWasConnected = await fs.access(chromeMarker).then(() => true, () => false);
+  chromeBridge.on('connection', connected => {
+    if (connected) { chromeWasConnected = true; fs.writeFile(chromeMarker, '', { mode: 0o600 }).catch(() => {}); }
+  });
+}
+const Browser = testBrowser ? BrowserController : ConnectedBrowser;
+browser = new Browser({ directory: app.getPath('userData'), headless: testBrowser,
+  bridge: chromeBridge, openChrome: wakeChrome,
   practiceDirectory: app.isPackaged ? path.join(process.resourcesPath, 'practice') : undefined,
   onChange: () => { browser.tabs().then(tabs => send('tabs', tabs)).catch(() => {}); engine?.browserChanged(); } });
 const jev = new JevService(() => settings.data);
@@ -87,7 +116,12 @@ window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 window.webContents.on('will-navigate', event => event.preventDefault());
 window.webContents.on('will-attach-webview', event => event.preventDefault());
 
-handle('initial', async () => ({ state: engine.view(), settings: settings.public(), tabs: await browser.tabs(), version: app.getVersion(), shortcutWarning }));
+const chromeStatus = () => ({ connected: chromeBridge?.connected || false, folder: chromeSetup?.folder || '', testing: testBrowser });
+handle('initial', async () => ({ state: engine.view(), settings: settings.public(), tabs: await browser.tabs(), version: app.getVersion(), shortcutWarning, chrome: chromeStatus() }));
+handle('chrome-status', chromeStatus);
+handle('chrome-setup', async () => { if (chromeSetup) { await openChrome('chrome://extensions'); shell.showItemInFolder(path.join(chromeSetup.folder, 'manifest.json')); } return chromeStatus(); });
+handle('chrome-connect', async () => { if (chromeSetup) await openChrome(`chrome-extension://${chromeSetup.extensionId}/welcome.html`); return engine.start(false); });
+chromeBridge?.on('connection', () => send('chrome-status', chromeStatus()));
 handle('settings-save', async input => {
   if (input && Object.hasOwn(input, 'shortcuts')) throw new Error('Save keyboard choices from Keyboard shortcuts.');
   const before = settings.data;
@@ -126,7 +160,7 @@ handle('show-browser', () => browser.show());
 handle('speak-position', (number, epoch) => {
   if (Number.isInteger(number) && number === engine.reader.index + 1 && epoch === engine.epoch && settings.data.speechEnabled) positionSpeech.speak(number);
 });
-handle('focus-reader-window', () => { if (!quitting && !shortcuts.editing) { window.show(); window.focus(); } });
+handle('focus-reader-window', () => { if (!quitting && !shortcuts.editing && !browser.manualPage) { window.show(); window.focus(); } });
 handle('reader-preference', async value => {
   if (typeof value !== 'boolean') throw new Error('Choose whether to read titles automatically.');
   return settings.save({ ...Object.fromEntries(['projectId', 'region', 'inputLanguage', 'voice', 'guidanceLanguage', 'speechEnabled', 'rate'].map(key => [key, settings.data[key]])), readOnFocus: value });
@@ -134,6 +168,7 @@ handle('reader-preference', async value => {
 handle('command', text => { if (typeof text !== 'string') throw new Error('Enter a spoken or typed command.'); return engine.input(text); });
 const allowed = new Set(['stop', 'select', 'open_item', 'open_current', 'confirm', 'choose', 'switch_tab', 'next', 'previous', 'repeat', 'read_results', 'read_headings', 'read_page', 'read_links', 'read_sinhala', 'read_original', 'where', 'help', 'back', 'forward', 'reload', 'new_tab', 'close_tab', 'next_tab', 'previous_tab', 'scroll_down', 'scroll_up', 'play', 'pause']);
 allowed.add('read_first_five');
+allowed.add('media_toggle');
 for (const action of ['focus_item', 'focus_next', 'focus_previous']) allowed.add(action);
 for (const action of ['show_results', 'show_headings', 'show_page', 'show_links']) allowed.add(action);
 handle('continue-reading', (epoch, index) => {
@@ -141,7 +176,7 @@ handle('continue-reading', (epoch, index) => {
   return engine.continueReading(epoch, index);
 });
 handle('control', (action, index) => {
-  if (!allowed.has(action) || (index !== undefined && (!Number.isInteger(index) || index < 0 || index > 10000))) throw new Error('That control is not available.');
+  if (!allowed.has(action) || (index !== undefined && (!Number.isSafeInteger(index) || index < 0 || (action !== 'switch_tab' && index > 10000)))) throw new Error('That control is not available.');
   return engine.control(action, index);
 });
 handle('open-site', site => {
@@ -209,6 +244,12 @@ watchRelease.refresh();
 window.webContents.on('did-start-loading', () => { positionSpeech.stop(); localReading.stop(); stopCloudSpeech(); });
 window.webContents.on('render-process-gone', () => { positionSpeech.stop(); localReading.stop(); stopCloudSpeech(); shortcuts.cancelHold(); shortcuts.setEditing(false); });
 await window.loadFile(rendererFile);
+if (!testBrowser) {
+  // Start ordinary Chrome. The extension reconnects through native messaging.
+  wakeChrome().then(() => chromeBridge.wait(35000)).then(() => engine.start(false)).catch(() => {
+    send('notice', { text: 'Set up the Svara Chrome extension in Connections, then choose Connect Chrome.', error: false });
+  });
+}
 app.on('activate', () => { if (window && !window.isDestroyed()) window.show(); });
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', event => {

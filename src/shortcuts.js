@@ -12,6 +12,7 @@ export class ShortcutManager {
       if (this.editing || this.updating || !this.config.enabled) return;
       const action = Object.keys(this.config.bindings).find(action => this.config.bindings[action] === key);
       if (action === 'speak') this.startHold(key);
+      else if (action === 'media_toggle') this.toggleMedia(key);
       else if (action) this.dispatch(action);
     });
     if (!accepted) throw new Error(`${shortcutLabel(key)} is unavailable or used by another app. Choose another shortcut.`);
@@ -27,7 +28,7 @@ export class ShortcutManager {
     return errors.join(' ');
   }
   startHold(key) {
-    if (this.held) return; // Ignore the system's repeated key-down callbacks.
+    if (this.held || this.mediaHold) return; // Only one native release watch at a time.
     const hold = {}; this.held = hold;
     const finish = action => {
       if (this.held !== hold) return;
@@ -39,8 +40,19 @@ export class ShortcutManager {
     } catch { finish('speak-unavailable'); }
   }
   cancelHold() {
+    this.mediaHold?.dispose?.(); this.mediaHold = null;
     if (!this.held) return;
     this.held.dispose?.(); this.held = null; this.dispatch('speak-cancel');
+  }
+  toggleMedia(key) {
+    // A held key must not repeatedly pause and resume the same video.
+    if (this.mediaHold || this.held) return;
+    const hold = {}; this.mediaHold = hold;
+    const released = () => { if (this.mediaHold === hold) this.mediaHold = null; };
+    try {
+      hold.dispose = this.watchRelease(key, released, released);
+      this.dispatch('media_toggle');
+    } catch { released(); this.dispatch('media-unavailable'); }
   }
   setEditing(value) {
     this.editing = value; if (value) this.cancelHold();

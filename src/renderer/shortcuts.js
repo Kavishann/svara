@@ -39,7 +39,7 @@ export function createShortcutEditor({ api, saved, activate, notice }) {
     status.classList.remove('failed');
   };
   document.querySelector('#single-key-preset').onclick = () => {
-    fill(SINGLE_KEY_SHORTCUTS); status.textContent = 'Ready to save: F2 results, F3 headings, F4 page text, F5 links, F6 previous, F7 next, F8 speak, F9 open, F10 read, F11 first five, F12 stop. Sinhala and original-language reading can also be assigned below.';
+    fill(SINGLE_KEY_SHORTCUTS); status.textContent = 'Ready to save: F2 results, F3 headings, F4 page text, F5 links, F6 previous, F7 next, F8 speak, F9 open, F10 read, F11 first five, F12 stop. Media pause/resume, Sinhala and original-language reading can also be assigned below.';
   };
   document.querySelector('#reset-shortcuts').onclick = () => { fill(DEFAULT_SHORTCUTS); status.textContent = 'Original shortcuts selected. Save to apply them.'; };
   form.onsubmit = async event => {

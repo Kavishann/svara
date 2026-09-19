@@ -11,6 +11,7 @@ const subscribe = (channel, listener) => {
 };
 contextBridge.exposeInMainWorld('svara', {
   initial: () => call('initial'), saveSettings: input => call('settings-save', input),
+  chromeStatus: () => call('chrome-status'), setupChrome: () => call('chrome-setup'), connectChrome: () => call('chrome-connect'), onChromeStatus: cb => subscribe('chrome-status', cb),
   saveShortcuts: input => call('shortcuts-save', input), editShortcuts: value => call('shortcuts-editing', value),
   chooseCredentials: () => call('credentials-file'), checkConnections: () => call('connections-check'),
   startBrowser: practice => call('start-browser', practice), showBrowser: () => call('show-browser'),
