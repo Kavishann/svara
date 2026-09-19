@@ -10,6 +10,7 @@ import { Engine } from './core/engine.js';
 import { ShortcutManager } from './shortcuts.js';
 import { STOP_SHORTCUT } from './core/shortcuts.js';
 import { createReleaseWatcher } from './key-release.js';
+import { positionSpeech } from './position-speech.js';
 import { createRequire } from 'node:module';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -36,14 +37,20 @@ settings = new Settings(app.getPath('userData'), safeStorage); await settings.lo
 const google = new GoogleServices(() => settings.data);
 browser = new BrowserController({ directory: app.getPath('userData'), headless: process.env.SVARA_TEST_HEADLESS === '1',
   practiceDirectory: app.isPackaged ? path.join(process.resourcesPath, 'practice') : undefined,
-  onChange: () => { browser.tabs().then(tabs => send('tabs', tabs)).catch(() => {}); } });
+  onChange: () => { browser.tabs().then(tabs => send('tabs', tabs)).catch(() => {}); engine?.browserChanged(); } });
 const jev = new JevService(() => settings.data);
 engine = new Engine({ browser, google, jev, settings: () => settings.data });
+positionSpeech.onFailure = () => send('navigation-tone');
+engine.on('stop', () => positionSpeech.stop());
+engine.on('narration', () => positionSpeech.stop());
 const releaseModule = app.isPackaged ? path.join(process.resourcesPath, 'native/key-release.node') : path.join(root, '../build/native/key-release.node');
 const watchRelease = createReleaseWatcher(createRequire(import.meta.url)(releaseModule));
-const shortcuts = new ShortcutManager(globalShortcut, action => send('shortcut-action', action), watchRelease);
+const shortcuts = new ShortcutManager(globalShortcut, action => {
+  if (action === 'stop') { engine.stop(); send('cancel-recording'); }
+  send('shortcut-action', action);
+}, watchRelease);
 let shortcutWarning = '';
-for (const event of ['state', 'narration', 'stop', 'notice']) engine.on(event, data => send(event, data));
+for (const event of ['state', 'narration', 'stop', 'notice', 'reader-focus', 'reader-position']) engine.on(event, data => send(event, data));
 
 session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
   callback(contents === window?.webContents && permission === 'media' && details.mediaTypes?.every(t => t === 'audio')
@@ -71,6 +78,7 @@ handle('shortcuts-save', async input => {
 handle('shortcuts-editing', value => {
   if (typeof value !== 'boolean') throw new Error('Choose a shortcut setting.');
   shortcuts.setEditing(value);
+  if (value) positionSpeech.stop();
 });
 handle('credentials-file', async () => {
   const result = await dialog.showOpenDialog(window, { title: 'Choose Google Cloud credentials', properties: ['openFile'], filters: [{ name: 'Google service account JSON', extensions: ['json'] }] });
@@ -88,9 +96,18 @@ handle('connections-check', async () => {
 });
 handle('start-browser', practice => { if (typeof practice !== 'boolean') throw new Error('Choose live or practice mode.'); return engine.start(practice); });
 handle('show-browser', () => browser.show());
+handle('speak-position', (number, epoch) => {
+  if (Number.isInteger(number) && number === engine.reader.index + 1 && epoch === engine.epoch && settings.data.speechEnabled) positionSpeech.speak(number);
+});
+handle('focus-reader-window', () => { if (!quitting && !shortcuts.editing) { window.show(); window.focus(); } });
+handle('reader-preference', async value => {
+  if (typeof value !== 'boolean') throw new Error('Choose whether to read titles automatically.');
+  return settings.save({ ...Object.fromEntries(['projectId', 'region', 'inputLanguage', 'voice', 'guidanceLanguage', 'speechEnabled', 'rate'].map(key => [key, settings.data[key]])), readOnFocus: value });
+});
 handle('command', text => { if (typeof text !== 'string') throw new Error('Enter a spoken or typed command.'); return engine.input(text); });
 const allowed = new Set(['stop', 'select', 'open_item', 'open_current', 'confirm', 'choose', 'switch_tab', 'next', 'previous', 'repeat', 'read_results', 'read_headings', 'read_page', 'read_links', 'read_sinhala', 'read_original', 'where', 'help', 'back', 'forward', 'reload', 'new_tab', 'close_tab', 'next_tab', 'previous_tab', 'scroll_down', 'scroll_up', 'play', 'pause']);
 allowed.add('read_first_five');
+for (const action of ['focus_item', 'focus_next', 'focus_previous']) allowed.add(action);
 handle('continue-reading', (epoch, index) => {
   if (!Number.isSafeInteger(epoch) || !Number.isInteger(index) || index < 0 || index > 4) throw new Error('That reading request is no longer available.');
   return engine.continueReading(epoch, index);
@@ -137,7 +154,7 @@ if (!globalShortcut.register(STOP_SHORTCUT, () => { engine.stop(); send('cancel-
   shortcutWarning += ' The stop shortcut is unavailable. Escape still stops reading inside Svara.';
 }
 watchRelease.refresh();
-window.webContents.on('render-process-gone', () => { shortcuts.cancelHold(); shortcuts.setEditing(false); });
+window.webContents.on('render-process-gone', () => { positionSpeech.stop(); shortcuts.cancelHold(); shortcuts.setEditing(false); });
 await window.loadFile(rendererFile);
 app.on('activate', () => { if (window && !window.isDestroyed()) window.show(); });
 app.on('window-all-closed', () => app.quit());

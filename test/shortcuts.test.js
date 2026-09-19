@@ -89,3 +89,14 @@ test('spoken help announces the saved shortcut assignments', () => {
   engine.tell('help'); assert.match(engine.message, /F8/); assert.match(engine.message, /F6/); assert.match(engine.message, /F7/); assert.match(engine.message, /F9/);
   assert.doesNotMatch(engine.message, /Control Option Space/);
 });
+
+test('legacy four-key preferences migrate and the added Read/Stop actions dispatch independently', async () => {
+  const old = normalizeShortcuts(config({ speak: 'Control+Space' }));
+  assert.equal(old.bindings.read, ''); assert.equal(old.bindings.stop, ''); assert.equal(old.bindings.speak, 'Control+Space');
+  const api = platform(), actions = [], manager = new ShortcutManager(api, action => actions.push(action), () => () => {});
+  manager.start(old);
+  await manager.save(config({ speak: 'Control+Space', read: 'F10', stop: 'F12' }), async () => {});
+  api.press('F10'); api.press('F12'); assert.deepEqual(actions, ['read', 'stop']);
+  assert.throws(() => normalizeShortcuts(config({ read: 'F10', stop: 'F10' })), /assigned twice/);
+  assert.equal(new Settings('/unused', {}).data.readOnFocus, false);
+});

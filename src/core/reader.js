@@ -7,7 +7,7 @@ export class Reader {
     this.snapshot = snapshot;
     this.scope = scope;
     this.items = snapshot[scope] || [];
-    this.index = same && previous ? this.items.findIndex(i => i.id === previous.id && i.text === previous.text) : 0;
+    this.index = same && previous ? this.items.findIndex(i => i.text === previous.text && (i.id === previous.id || (i.href && i.href === previous.href))) : 0;
     if (this.index < 0 && this.items.length) this.index = 0;
     if (!this.items.length) this.index = -1;
     return this.current();

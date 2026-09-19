@@ -17,6 +17,29 @@ try {
   window.on('pageerror', error => errors.push(error.message));
   await window.waitForSelector('#talk');
   await window.waitForFunction(() => document.querySelector('#status-message').textContent.includes('Your browser'));
+  // Exercise native-speech wiring, but intercept audio output in this test profile.
+  await app.evaluate(() => {
+    const childProcess = process.getBuiltinModule('node:child_process');
+    const { EventEmitter } = process.getBuiltinModule('node:events');
+    const original = childProcess.spawn;
+    globalThis.svaraPositionTest = { numbers: [], stops: 0 };
+    childProcess.spawn = (command, args, options) => {
+      if (command !== '/usr/bin/say') return original(command, args, options);
+      globalThis.svaraPositionTest.numbers.push(Number(args.at(-1)));
+      const child = new EventEmitter();
+      child.kill = () => { globalThis.svaraPositionTest.stops++; child.emit('exit', null, 'SIGTERM'); };
+      return child;
+    };
+    process.getBuiltinModule('node:module').syncBuiltinESMExports();
+  });
+  const expectNumbers = async expected => {
+    const numbers = await app.evaluate(async (_electron, count) => {
+      const deadline = Date.now() + 2000;
+      while (globalThis.svaraPositionTest.numbers.length < count && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+      return globalThis.svaraPositionTest.numbers;
+    }, expected.length);
+    assert.deepEqual(numbers, expected);
+  };
   const audit = async label => {
     const result = await new AxeBuilder({ page: window }).setLegacyMode(true).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
     assert.deepEqual(result.violations.map(v => ({ id: v.id, targets: v.nodes.map(n => n.target) })), [], `${label} accessibility`);
@@ -27,9 +50,38 @@ try {
   assert.equal(await window.evaluate(() => typeof window.require), 'undefined');
   await window.getByRole('button', { name: 'Try practice mode' }).click();
   await window.waitForFunction(() => document.querySelectorAll('.item-button').length === 5);
-  await window.getByRole('button', { name: 'Read next item', exact: true }).click();
+  await window.waitForFunction(() => document.activeElement?.dataset.itemIndex === '0');
+  await expectNumbers([1]);
+  await window.keyboard.press('ArrowDown');
+  await window.waitForFunction(() => document.activeElement?.dataset.itemIndex === '1');
+  await expectNumbers([1, 2]);
+  await window.keyboard.press('ArrowUp');
+  await window.waitForFunction(() => document.activeElement?.dataset.itemIndex === '0');
+  await expectNumbers([1, 2, 1]);
+  const stopsBefore = await app.evaluate(() => globalThis.svaraPositionTest.stops);
+  await window.getByRole('button', { name: 'Stop voice', exact: true }).click();
+  await window.waitForFunction(() => /Stopped|නැවැත්තුවා/.test(document.querySelector('#status-message').textContent));
+  assert.ok(await app.evaluate(() => globalThis.svaraPositionTest.stops) > stopsBefore);
+  await window.locator('#read-on-focus').uncheck();
+  await window.waitForFunction(async () => (await window.svara.initial()).settings.readOnFocus === false);
+  await window.locator('.item-button').nth(0).focus();
+  await window.keyboard.press('ArrowDown');
+  await window.waitForFunction(() => document.activeElement?.dataset.itemIndex === '1');
+  await window.keyboard.press('r');
+  await window.waitForFunction(() => document.querySelector('#status-message').textContent.startsWith('2.'));
+  await window.keyboard.press('Enter');
+  await window.getByRole('button', { name: 'Confirm · තහවුරු කරන්න', exact: true }).click();
+  await window.waitForFunction(() => document.querySelector('#page-url').textContent.includes('Local practice') && document.querySelector('#position').textContent === '1 / 5');
+  assert.match((await window.evaluate(() => window.svara.initial())).state.page.url, /#music$/);
+  await window.locator('.item-button').nth(2).click();
+  await window.getByRole('button', { name: 'Confirm · තහවුරු කරන්න', exact: true }).click();
+  await window.waitForFunction(async () => (await window.svara.initial()).state.page.url.endsWith('#sinhala'));
+  await window.evaluate(() => window.svara.startBrowser(true));
+  await window.locator('#read-on-focus').check();
+  await window.waitForFunction(async () => (await window.svara.initial()).settings.readOnFocus === true);
+  await window.getByRole('button', { name: 'Next title', exact: true }).click();
   await window.waitForFunction(() => document.querySelector('#position').textContent === '2 / 5');
-  await window.getByRole('button', { name: 'Read previous item', exact: true }).click();
+  await window.getByRole('button', { name: 'Previous title', exact: true }).click();
   await window.waitForFunction(() => document.querySelector('#position').textContent === '1 / 5');
   await window.getByRole('button', { name: 'Headings', exact: true }).click();
   await window.waitForFunction(() => document.querySelector('[data-scope="headings"]').getAttribute('aria-pressed') === 'true');
@@ -46,7 +98,7 @@ try {
   await window.getByRole('button', { name: 'Keyboard shortcuts', exact: true }).click();
   await window.waitForSelector('#view-shortcuts:not([hidden])');
   assert.equal(await app.evaluate(({ globalShortcut }) => globalShortcut.isSuspended()), true);
-  await window.getByRole('button', { name: 'Use single keys · F6–F9', exact: true }).click();
+  await window.getByRole('button', { name: 'Use single keys · F6–F12', exact: true }).click();
   await window.locator('#shortcut-next-key').selectOption('F8');
   await window.getByRole('button', { name: 'Save and use shortcuts', exact: true }).click();
   await window.waitForFunction(() => document.querySelector('#shortcut-status').textContent.includes('assigned twice'));
@@ -58,7 +110,7 @@ try {
   await window.getByRole('button', { name: 'Save and use shortcuts', exact: true }).click();
   await window.waitForSelector('#view-home:not([hidden])');
   assert.equal(await app.evaluate(({ globalShortcut }) => globalShortcut.isSuspended()), false);
-  assert.equal(await app.evaluate(({ globalShortcut }) => ['F6', 'F7', 'F8', 'F9'].every(key => globalShortcut.isRegistered(key))), true);
+  assert.equal(await app.evaluate(({ globalShortcut }) => ['F6', 'F7', 'F8', 'F9', 'F10', 'F12'].every(key => globalShortcut.isRegistered(key))), true);
   assert.equal(await window.locator('.hero [data-shortcut-hint="speak"]').textContent(), 'F8');
   // Exercise the same IPC event emitted by the native shortcut callbacks, without recording the user's microphone.
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('shortcut-action', 'next'));
@@ -82,6 +134,7 @@ try {
   await window.waitForFunction(() => document.querySelector('#position').textContent === '2 / 5');
   await window.keyboard.press('Escape');
   await window.waitForFunction(() => /Stopped|නැවැත්තුවා/.test(document.querySelector('#status-message').textContent));
+  await window.getByRole('button', { name: 'Home', exact: true }).click();
   await testInteractions(app, window);
   assert.deepEqual(errors, []);
   console.log('Desktop UI passed: home, practice, reader, settings, shortcut editing, conflicts, native registration, actions, reload persistence, disabling, Escape, and accessibility. Screenshots in artifacts/.');

@@ -41,7 +41,7 @@ button:hover:not(:disabled){filter:brightness(.96)}
 .version{display:flex;justify-content:space-between;color:#829088;font-size:9px;letter-spacing:.1em;padding:0 8px}
 .version span{letter-spacing:0}
 main{margin-left:208px;width:calc(100% - 208px);padding:25px 36px 0;min-width:0}
-.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:29px}
+.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:29px;position:sticky;top:40px;z-index:8;background:#f6f8f7;padding:10px 0}
 .eyebrow{font-size:9px;letter-spacing:.15em;color:#728478;font-weight:700}
 .breadcrumb{font-size:13px;color:#3b554b;margin-top:3px}
 .top-actions{display:flex;gap:16px;align-items:center}
@@ -255,3 +255,5 @@ main{margin-left:184px;width:calc(100% - 184px)}
 
 .reading-card #first-five-help{font-size:12px;line-height:1.5;margin:8px 0 12px;max-height:none}
 #talk{touch-action:none;user-select:none}
+
+.reader-key-help { padding: 0 20px; margin: 0 0 14px; line-height: 1.7; }

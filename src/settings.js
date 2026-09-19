@@ -10,6 +10,7 @@ const publicSchema = z.object({
   voice: z.enum(['Kore', 'Puck', 'Aoede', 'Charon', 'Fenrir', 'Leda']),
   guidanceLanguage: z.enum(['si-LK', 'en-US']),
   speechEnabled: z.boolean(),
+  readOnFocus: z.boolean().optional(),
   rate: z.number().min(0.6).max(2),
   shortcuts: z.unknown().transform(normalizeShortcuts).optional(),
   geminiKey: z.string().max(500).optional(),
@@ -21,7 +22,7 @@ export class Settings {
   constructor(directory, safeStorage) {
     this.directory = directory; this.safeStorage = safeStorage;
     this.data = { projectId: '', region: 'asia-southeast1', inputLanguage: 'si-LK', voice: 'Kore',
-      guidanceLanguage: 'si-LK', speechEnabled: true, rate: 1, credentialsPath: '', geminiKey: '', typesafeKey: '',
+      guidanceLanguage: 'si-LK', speechEnabled: true, readOnFocus: false, rate: 1, credentialsPath: '', geminiKey: '', typesafeKey: '',
       shortcuts: normalizeShortcuts(DEFAULT_SHORTCUTS) };
   }
   async load() {

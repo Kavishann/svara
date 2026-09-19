@@ -2,11 +2,13 @@ export const SHORTCUT_ACTIONS = {
   speak: { label: 'Hold to speak', sinhala: 'කතා කරන විට යතුර ඔබාගෙන සිටින්න' },
   previous: { label: 'Read previous item', sinhala: 'කලින් එක කියවන්න' },
   next: { label: 'Read next item', sinhala: 'ඊළඟ එක කියවන්න' },
-  open: { label: 'Open current item', sinhala: 'තෝරාගත් අයිතමය විවෘත කරන්න' }
+  open: { label: 'Open current item', sinhala: 'තෝරාගත් අයිතමය විවෘත කරන්න' },
+  read: { label: 'Read selected title', sinhala: 'තෝරාගත් මාතෘකාව කියවන්න' },
+  stop: { label: 'Stop voice', sinhala: 'හඬ නවත්වන්න' }
 };
 export const STOP_SHORTCUT = 'Control+Alt+Escape';
-export const DEFAULT_SHORTCUTS = { enabled: true, bindings: { speak: 'Control+Alt+Space', previous: '', next: '', open: '' } };
-export const SINGLE_KEY_SHORTCUTS = { enabled: true, bindings: { speak: 'F8', previous: 'F6', next: 'F7', open: 'F9' } };
+export const DEFAULT_SHORTCUTS = { enabled: true, bindings: { speak: 'Control+Alt+Space', previous: '', next: '', open: '', read: '', stop: '' } };
+export const SINGLE_KEY_SHORTCUTS = { enabled: true, bindings: { speak: 'F8', previous: 'F6', next: 'F7', open: 'F9', read: 'F10', stop: 'F12' } };
 export const SHORTCUT_KEYS = ['Space', 'Enter', 'Up', 'Down', 'Left', 'Right', 'Home', 'End', 'PageUp', 'PageDown',
   ...Array.from({ length: 24 }, (_, i) => `F${i + 1}`), ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'];
 export const MODIFIERS = ['Control', 'Alt', 'Shift', 'Command'];
@@ -20,7 +22,7 @@ export function normalizeShortcuts(input) {
     || Object.keys(input.bindings).some(k => !Object.hasOwn(SHORTCUT_ACTIONS, k))) throw new Error('Choose a key for each shortcut, or choose Not assigned.');
   const bindings = {}, used = new Set();
   for (const [action, { label }] of Object.entries(SHORTCUT_ACTIONS)) {
-    const value = input.bindings[action];
+    const value = input.bindings[action] ?? (['read', 'stop'].includes(action) ? '' : undefined);
     if (typeof value !== 'string' || value.length > 80) throw new Error(`Choose a valid key for ${label}.`);
     if (!value) { bindings[action] = ''; continue; }
     const parts = value.split('+'), key = parts.pop();

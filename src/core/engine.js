@@ -19,10 +19,11 @@ export class Engine extends EventEmitter {
     super(); Object.assign(this, { browser, google, jev, settings });
     this.reader = new Reader(); this.pending = null; this.status = 'ready'; this.message = 'Your browser, at your pace.';
     this.transcript = ''; this.english = ''; this.history = []; this.epoch = 0; this.busy = false; this.snapshot = null; this.batch = null;
+    this.dirty = false; this.more = null; this.moreTried = new Set(); this.syncTimer = null; this.tailTimer = null; this.autoScope = true;
   }
   view() {
     return { status: this.status, message: this.message, transcript: this.transcript, english: this.english,
-      reader: this.reader.view(), page: this.snapshot ? { title: this.snapshot.title, url: this.snapshot.url } : null,
+      reader: this.reader.view(), loadingMore: Boolean(this.more), page: this.snapshot ? { title: this.snapshot.title, url: this.snapshot.url } : null,
       practice: this.browser.practice, pending: this.pending ? { label: this.pending.label, kind: this.pending.kind,
         candidates: this.pending.candidates?.map(e => ({ id: e.id, text: e.text })) } : null,
       history: this.history.slice(-12).reverse(), speechEnabled: this.settings().speechEnabled };
@@ -46,16 +47,18 @@ export class Engine extends EventEmitter {
     this.say(text);
   }
   stop() {
+    this.cancelMore(); clearTimeout(this.syncTimer); this.syncTimer = null; this.dirty = false;
     this.batch = null;
-    this.epoch++; this.abort?.abort(); this.pending = null;
+    this.epoch++; this.abort?.abort(); this.pending = null; this.busy = false;
     this.emit('stop'); this.update('ready', messages.stopped[this.settings().guidanceLanguage === 'si-LK' ? 1 : 0]);
   }
   current(epoch) { if (epoch !== this.epoch) throw new DOMException('Cancelled', 'AbortError'); }
-  async run(fn) {
+  async run(fn, { keepMore = false } = {}) {
     if (this.busy) throw new Error('A command is still finishing. Press Escape to cancel it, then try again.');
+    if (!keepMore) this.cancelMore();
     this.batch = null;
-    this.busy = true; const epoch = ++this.epoch; this.abort = new AbortController(); this.emit('stop');
-    try { await fn(epoch, this.abort.signal); this.current(epoch); if (this.status !== 'confirm') this.update('ready'); }
+    this.busy = true; const epoch = ++this.epoch; const controller = new AbortController(); this.abort = controller; this.emit('stop');
+    try { await fn(epoch, controller.signal); this.current(epoch); if (this.status !== 'confirm') this.update('ready'); }
     catch (error) {
       if (epoch === this.epoch && error.name !== 'AbortError') {
         this.update('error', this.friendlyError(error));
@@ -68,8 +71,97 @@ export class Engine extends EventEmitter {
           : this.message;
         this.emit('narration', { text: spokenError, language, epoch, practice: this.browser.practice, reading: false });
       }
-    } finally { this.busy = false; }
+    } finally {
+      if (this.abort === controller) { this.busy = false; if (this.dirty) this.browserChanged(); }
+    }
     return this.view();
+  }
+  cancelMore() {
+    clearTimeout(this.tailTimer); this.more?.controller.abort(); this.more = null;
+  }
+  browserChanged() {
+    this.dirty = true;
+    if (!this.syncTimer) this.syncTimer = setTimeout(() => {
+      this.syncTimer = null; this.syncPage().catch(() => {});
+    }, 400);
+  }
+  preferredScope(snapshot) {
+    return ['results', 'headings', 'article', 'links'].find(scope => snapshot[scope]?.length) || 'results';
+  }
+  focusReader(raise = false) { this.emit('reader-focus', { index: this.reader.index, raise }); }
+  announcePosition() {
+    if (this.reader.current() && this.settings().speechEnabled !== false) this.emit('reader-position', { number: this.reader.index + 1, epoch: this.epoch });
+  }
+  async adoptPage(snapshot, epoch, signal, raise = true) {
+    this.snapshot = snapshot; this.pending = null; this.autoScope = true; this.moreTried.clear();
+    this.reader.load(snapshot, this.preferredScope(snapshot)); this.reader.index = this.reader.items.length ? 0 : -1;
+    this.update('ready', snapshot.title); this.focusReader(raise);
+    if (this.reader.current() && this.settings().readOnFocus !== false) await this.read(epoch, signal);
+    else this.announcePosition();
+    this.preloadTail();
+  }
+  async syncPage() {
+    if (!this.dirty || this.busy || this.more || !this.browser.active) return;
+    this.dirty = false; const epoch = this.epoch;
+    const snapshot = await this.browser.snapshot();
+    if (this.busy || this.more || epoch !== this.epoch) { this.browserChanged(); return; }
+    const scope = this.reader.scope;
+    const fresh = snapshot[scope] || [];
+    const changedPage = !this.snapshot || snapshot.pageId !== this.snapshot.pageId || snapshot.url !== this.snapshot.url;
+    const replacement = fresh.length && this.reader.items.length && !fresh.some(a => this.reader.items.some(b => a.text === b.text && (a.id === b.id || (a.href && a.href === b.href))));
+    const firstContent = !this.reader.items.length && ['results', 'headings', 'article', 'links'].some(s => snapshot[s]?.length);
+    const titlesLoaded = this.autoScope && scope !== 'results' && snapshot.results?.length;
+    if (changedPage || replacement || firstContent || titlesLoaded) {
+      await this.run((nextEpoch, signal) => this.adoptPage(snapshot, nextEpoch, signal));
+    } else {
+      const changed = JSON.stringify(fresh) !== JSON.stringify(this.reader.items) || snapshot.title !== this.snapshot.title;
+      this.snapshot = snapshot; this.reader.load(snapshot, scope);
+      if (changed) this.update();
+    }
+  }
+  async loadMore(allowNextPage) {
+    if (this.more) return this.more.promise;
+    if (!this.browser.loadMore || !['results', 'links'].includes(this.reader.scope) || !this.reader.snapshot) return null;
+    const snapshot = this.reader.snapshot, scope = this.reader.scope;
+    const key = `${snapshot.pageId}|${snapshot.url}|${scope}|${this.reader.items.length}|${this.reader.items.at(-1)?.id}`;
+    if (!allowNextPage && (snapshot.pagination?.kind === 'next' || this.moreTried.has(key))) return null;
+    this.moreTried.add(key);
+    const controller = new AbortController(), job = { controller, promise: null }; this.more = job; this.update();
+    job.promise = this.browser.loadMore(snapshot, scope, controller.signal, allowNextPage).then(result => {
+      if (controller.signal.aborted) return null;
+      if (result?.changed && result.snapshot.pageId === snapshot.pageId && result.snapshot.url === snapshot.url && this.reader.scope === scope) {
+        this.snapshot = result.snapshot; this.reader.load(result.snapshot, scope); this.update();
+      }
+      return result;
+    }).finally(() => {
+      if (this.more === job) { this.more = null; this.update(); if (this.dirty) this.browserChanged(); }
+    });
+    return job.promise;
+  }
+  preloadTail() {
+    clearTimeout(this.tailTimer);
+    if (this.reader.index >= 0 && this.reader.index === this.reader.items.length - 1) {
+      this.tailTimer = setTimeout(() => this.loadMore(false).catch(() => {}), 150);
+    }
+  }
+  async moveReader(delta, epoch, signal, speak = true) {
+    if (delta > 0 && this.more) { await this.more.promise; this.current(epoch); }
+    if (!this.reader.move(delta)) {
+      if (delta < 0) { this.tell('first'); return; }
+      const old = new Set(this.reader.items.map(e => `${e.href || e.id}|${e.text}`));
+      this.update('working', 'Looking for more titles…');
+      const result = await this.loadMore(true); this.current(epoch);
+      if (!result?.changed) { this.tell('end'); return; }
+      const scope = this.reader.scope; this.snapshot = result.snapshot;
+      this.reader.load(result.snapshot, result.snapshot[scope]?.length ? scope : this.preferredScope(result.snapshot));
+      const firstNew = this.reader.items.findIndex(e => !old.has(`${e.href || e.id}|${e.text}`));
+      if (firstNew < 0) { this.tell('end'); return; }
+      this.reader.select(firstNew);
+    }
+    this.update('ready'); this.focusReader();
+    if (speak) await this.read(epoch, signal);
+    else this.announcePosition();
+    this.preloadTail();
   }
   friendlyError(e) {
     if (e instanceof ServiceError) return e.message;
@@ -88,8 +180,7 @@ export class Engine extends EventEmitter {
       this.update('working', practice ? 'Opening the practice page…' : 'Opening your browser…');
       const snapshot = await (practice ? this.browser.startPractice() : this.browser.startLive());
       this.current(epoch); this.snapshot = snapshot; this.reader.reset();
-      if (practice) { this.reader.load(snapshot, 'results'); this.say('Practice mode. This sample page uses no cloud services. Select an item or try “next”.', 'en-US'); }
-      else this.tell('ready');
+      await this.adoptPage(snapshot, epoch, this.abort.signal);
     });
   }
   async input(text) {
@@ -159,7 +250,7 @@ export class Engine extends EventEmitter {
         label: `Activate “${target.text}” on ${new URL(snapshot.url).hostname || 'this page'}? Say confirm or cancel.` };
       this.update('confirm'); await this.guidance(this.pending.label, epoch, signal); return;
     }
-    await this.browser.activate(target, snapshot, action === 'type' ? command.payload : undefined); this.current(epoch);
+    await this.browser.activate(target, snapshot, action === 'type' ? command.payload : undefined, signal); this.current(epoch);
     await this.afterAction(action, epoch, signal);
   }
   async confirmPending(epoch) {
@@ -168,7 +259,7 @@ export class Engine extends EventEmitter {
       this.pending = null; throw new Error('There is no current action to confirm. Please give the command again.');
     }
     this.pending = null;
-    await this.browser.activate(pending.target, pending.snapshot); this.current(epoch);
+    await this.browser.activate(pending.target, pending.snapshot, undefined, this.abort.signal); this.current(epoch);
     await this.afterAction(pending.action, epoch, this.abort.signal);
   }
   async chooseCandidate(index, epoch) {
@@ -180,7 +271,7 @@ export class Engine extends EventEmitter {
   async afterAction(action, epoch, signal) {
     this.snapshot = await this.browser.snapshot(); this.current(epoch);
     if (['navigate', 'search', 'click', 'back', 'forward', 'reload', 'next_tab', 'previous_tab', 'new_tab', 'close_tab'].includes(action)) {
-      this.reader.load(this.snapshot, this.snapshot.results.length ? 'results' : 'headings');
+      await this.adoptPage(this.snapshot, epoch, signal); return;
     }
     const label = action === 'type' ? 'The text is in the field. It has not been submitted.'
       : action === 'click' ? `Activated the item. Current page: ${this.snapshot.title}.`
@@ -190,7 +281,7 @@ export class Engine extends EventEmitter {
   async read(epoch, signal) {
     const item = this.reader.current();
     if (!item) { this.tell('empty'); return; }
-    let text = item.text + (item.meta ? `. ${item.meta}` : '');
+    let text = item.text;
     let language = languageOf(text, item.language);
     if (this.reader.language === 'si-LK' && language !== 'si-LK') {
       if (this.browser.practice) throw new Error('Sinhala translation needs Gemini. Switch to live mode and add your connections.');
@@ -225,13 +316,13 @@ export class Engine extends EventEmitter {
       this.batch = { epoch, count: Math.min(5, this.reader.items.length) };
       await this.read(epoch, signal);
     } else if (scopes[action]) {
+      this.autoScope = false;
       this.update('working', 'Collecting page content…');
       this.snapshot = await this.browser.snapshot(); this.current(epoch);
       this.reader.load(this.snapshot, scopes[action]); this.reader.index = this.reader.items.length ? 0 : -1;
-      await this.read(epoch, signal);
+      this.focusReader(); await this.read(epoch, signal); this.preloadTail();
     } else if (['next', 'previous'].includes(action)) {
-      if (!this.reader.move(action === 'next' ? 1 : -1)) this.tell(action === 'next' ? 'end' : 'first');
-      else await this.read(epoch, signal);
+      await this.moveReader(action === 'next' ? 1 : -1, epoch, signal);
     } else if (action === 'repeat') await this.read(epoch, signal);
     else if (action === 'read_sinhala' || action === 'read_original') {
       this.reader.language = action === 'read_sinhala' ? 'si-LK' : 'original'; await this.read(epoch, signal);
@@ -249,7 +340,13 @@ export class Engine extends EventEmitter {
   async control(action, index) {
     if (action === 'stop') { this.stop(); return this.view(); }
     return this.run(async (epoch, signal) => {
-      if (action === 'select') { this.reader.select(index); await this.read(epoch, signal); }
+      if (action === 'select' || action === 'focus_item') {
+        this.reader.select(index); this.update(); this.focusReader();
+        if (action === 'select' || this.settings().readOnFocus !== false) await this.read(epoch, signal);
+        else this.announcePosition();
+        this.preloadTail();
+      }
+      else if (action === 'focus_next' || action === 'focus_previous') await this.moveReader(action === 'focus_next' ? 1 : -1, epoch, signal, this.settings().readOnFocus !== false);
       else if (action === 'open_item' || action === 'open_current') {
         if (this.pending) throw new Error('Confirm or cancel the pending choice before opening a reading item.');
         if (!this.reader.current() && action === 'open_current') { this.tell('empty'); return; }
@@ -262,6 +359,6 @@ export class Engine extends EventEmitter {
       else if (action === 'switch_tab') {
         await this.browser.switchTab(index); this.current(epoch); await this.afterAction('next_tab', epoch, signal);
       } else await this.perform(action, {}, epoch, signal);
-    });
+    }, { keepMore: ['select', 'focus_item', 'focus_next', 'focus_previous', 'next', 'previous', 'repeat'].includes(action) });
   }
 }

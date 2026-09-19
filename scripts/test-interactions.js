@@ -5,7 +5,9 @@ import assert from 'node:assert/strict';
 export async function testInteractions(app, window) {
   const initial = await window.evaluate(() => window.svara.initial());
   await app.evaluate(({ ipcMain, BrowserWindow }, state) => {
-    globalThis.svaraInteractionTest = { submissions: 0, synthesized: [] };
+    globalThis.svaraInteractionTest = { submissions: 0, synthesized: [], positions: 0 };
+    ipcMain.removeHandler('speak-position');
+    ipcMain.handle('speak-position', () => { globalThis.svaraInteractionTest.positions++; return { ok: true }; });
     ipcMain.removeHandler('microphone-permission');
     ipcMain.handle('microphone-permission', () => ({ ok: true, value: true }));
     ipcMain.removeHandler('audio');
@@ -43,6 +45,9 @@ export async function testInteractions(app, window) {
   };
   await phase('speak-start');
   await window.waitForFunction(() => document.querySelector('#talk-label').textContent === 'Release to send');
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('reader-position', { number: 2, epoch: 0 }));
+  await window.evaluate(() => window.svara.initial());
+  assert.equal(await app.evaluate(() => globalThis.svaraInteractionTest.positions), 0, 'No number speech while the microphone is recording');
   await phase('speak-start'); assert.equal(await submissions(), 0);
   assert.equal(await window.evaluate(() => window.svaraFakeMedia.starts), 1);
   await phase('speak-end');
@@ -50,7 +55,7 @@ export async function testInteractions(app, window) {
   await expectSubmissions(1);
   await phase('speak-start');
   await window.waitForFunction(() => document.querySelector('#talk-label').textContent === 'Release to send');
-  await window.keyboard.press('Escape'); await phase('speak-end');
+  await phase('stop'); await phase('speak-end');
   await window.waitForFunction(() => document.querySelector('#talk-label').textContent === 'Hold to speak');
   await expectSubmissions(1);
 
@@ -96,6 +101,16 @@ export async function testInteractions(app, window) {
   await window.getByRole('button', { name: /^Page reader/ }).click();
   await window.getByRole('button', { name: 'Headings', exact: true }).click();
   await window.waitForFunction(() => document.querySelector('#speaking-indicator').hidden && document.querySelectorAll('.item-button').length > 5);
+  await window.locator('#read-on-focus').uncheck();
+  await window.waitForFunction(async () => (await window.svara.initial()).settings.readOnFocus === false);
+  await app.evaluate(() => { globalThis.svaraInteractionTest.synthesized = []; });
+  await window.locator('.item-button').first().focus();
+  await window.keyboard.press('ArrowDown');
+  await window.waitForFunction(() => document.activeElement?.dataset.itemIndex === '1');
+  assert.equal((await app.evaluate(() => globalThis.svaraInteractionTest.synthesized)).length, 0);
+  await phase('read');
+  await window.waitForFunction(() => document.querySelector('#status-message').textContent.startsWith('2.') && document.querySelector('#speaking-indicator').hidden);
+  assert.equal((await app.evaluate(() => globalThis.svaraInteractionTest.synthesized)).length, 1);
   await app.evaluate(() => { globalThis.svaraInteractionTest.synthesized = []; });
   await window.locator('#continuous').check();
   await window.locator('#read-first-five').click();

@@ -1,7 +1,7 @@
 {
   "name": "svara-browser",
   "productName": "Svara",
-  "version": "0.3.1",
+  "version": "0.4.1",
   "description": "A voice-guided browser for Sinhala speakers",
   "private": true,
   "type": "module",

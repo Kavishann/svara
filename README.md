@@ -47,17 +47,22 @@ API keys are encrypted with Electron `safeStorage` backed by macOS secure storag
 | Action | Control |
 | --- | --- |
 | Record a command | Hold your speaking shortcut (initially **Control + Option + Space**) or the **Hold to speak** button. Speak after the tone; release to send. |
-| Stop reading/cancel a recording | **Escape** in Svara; **Control + Option + Escape** anywhere |
+| Stop voice and cancel pending voice work | **Stop voice** button, **Escape** in Svara, **Control + Option + Escape** anywhere, or a custom Stop key |
 | Read a section | Results, Headings, Page text, or Links |
-| Navigate reading items | Previous, Next, Read again, or numbered list buttons |
-| Activate selected link | Open this item |
+| Move between titles | **↑ / ↓** (or **← / →**) while Page Reader is focused; Previous/Next buttons or custom keys |
+| Read the selected title | **R** in the focused reading list, **Read title**, or your custom Read key. Moving speaks only the item number in English, using the Mac’s built-in Samantha voice. |
+| Activate selected link | **Enter**, click its title, **Open this item**, or your custom Open key |
 | Translate selected passage | Read this in Sinhala; Read the original switches back |
 | Read five options | **Read first 5**, or say “read first five” / “මුල් පහ කියවන්න”. Reads from item 1 to at most item 5, then stops, even if continuous reading is enabled. |
 | Continue automatically | Keep reading the next item |
 | Change speaking speed | Speed slider; implemented in audio playback |
 | Configure keyboard shortcuts | **Keyboard shortcuts** in the sidebar, or **Command + K** in Svara |
 
-In **Keyboard shortcuts**, choose a key and optional extra keys for speaking, previous, next, and opening the current item. **Use single keys · F6–F9** selects F8 for speaking, F6 for previous, F7 for next, and F9 for opening. Choose **Save and use shortcuts** to apply the choices immediately and return Home. Your choices are saved on this Mac and restored at startup; existing API connections are preserved. Home and spoken Help show the saved keys.
+Each new page or active tab brings Page Reader forward and selects its first title. YouTube Results contain video titles without channel names, view counts, or durations. Other pages prefer linked headings, then headings or readable text. “Read titles as I move” is off by default; moving announces just the item number using Apple speech, with no translation, internet connection, or API request. Enable the switch to read full titles instead. Rapid moves replace the previous number; Stop, Read title, and starting a recording interrupt it. A short tone is used if local speech is unavailable. Page updates preserve the selected link when it is still present. Svara leaves Connections and Keyboard shortcuts open while you edit them.
+
+At the last item, Svara looks for more results by scrolling or using a recognized Load more control. Moving past the end follows a recognized Next-page link or pagination button. New titles become available without a manual refresh. Site-specific controls, consent pages, or slow loading can still require manual help or another Next press.
+
+In **Keyboard shortcuts**, choose a key and optional extra keys for speaking, previous, next, opening, reading the selected title, and stopping voice. **Use single keys · F6–F12** selects F8 for speaking, F6 for previous, F7 for next, F9 for opening, F10 for reading, and F12 for stopping voice. Choose **Save and use shortcuts** to apply the choices immediately and return Home. Your choices are saved on this Mac and restored at startup; existing API connections are preserved. Home and spoken Help show the saved keys.
 
 Releasing the speaking key (or a required modifier) finishes recording and processes the command automatically. Escape cancels without sending. A release before the microphone is ready cancels that attempt; hold again after granting microphone permission. Each recording is limited to 45 seconds.
 
@@ -71,7 +76,7 @@ Recordings are capped at 45 seconds and submitted after the user finishes. This 
 
 - Search terms and dictated text must remain an exact substring of the original transcript. Translation that changes the payload is rejected.
 - Search results retain their link identity. Before clicking, the app checks document identity, URL, element ID, label, role, and destination. A changed page or result requires refreshing the list.
-- Every non-link click and potentially consequential link needs confirmation. Confirmation expires after 60 seconds and revalidates the target. Cancelling invalidates in-flight model responses. These rules reduce mistakes; they cannot establish every possible website side effect.
+- Ordinary non-link clicks and potentially consequential links need confirmation. Recognized Load more and pagination controls are handled directly by reader navigation; form controls and obvious account/payment destinations are excluded from automatic pagination. Confirmation expires after 60 seconds and revalidates the target. Cancelling invalidates in-flight model responses. These rules reduce mistakes; they cannot establish every possible website side effect.
 - Page content is passed as untrusted data. Only fixed browser operations exist. Sensitive input fields, including passwords and payment codes, are excluded from the snapshot, and form values are not collected.
 - The renderer has no Node.js access. IPC checks the calling window and frame. Navigation and remote windows from the app UI are blocked; browsing happens in a separate sandboxed browser process.
 - Raw recordings and command transcripts are kept in memory, not saved by Svara. Chrome maintains its separate browser profile. Cloud providers apply their own retention policies.
@@ -82,7 +87,7 @@ Recordings are capped at 45 seconds and submitted after the user finishes. This 
 
 This is a working prototype, not a complete replacement for assistive technology. Cloud speech and language quality must be tested with blind Sinhala speakers. Sinhala Gemini-TTS support is listed as Preview by Google. First-time OS permission dialogs and service setup may need assistance.
 
-The page collector covers the main document and loaded content. Iframes, shadow DOM content, image-only text, inaccessible custom widgets, downloads/uploads, CAPTCHA, password entry, and complex forms are outside the first version. At most 140 interactive candidates, 100 results/headings, and 160 article passages are collected. Long pages need further scrolling and refreshed lists. YouTube's changing layout may require adapter updates. Website consent screens and anti-automation restrictions can interrupt navigation.
+The page collector covers the main document and loaded content. Iframes, shadow DOM content, image-only text, inaccessible custom widgets, downloads/uploads, CAPTCHA, password entry, and complex forms are outside the first version. Snapshots include at most 140 Jev action candidates, 500 results/links, 300 headings, and 160 article passages. Reader links remain directly clickable beyond Jev’s candidate limit. Very long lists beyond the collector limits and unrecognized pagination need further work. YouTube's changing layout may require adapter updates. Website consent screens and anti-automation restrictions can interrupt navigation.
 
 System microphone permission and keyboard shortcuts are used for the browser app; there is no Finder or general macOS automation. Use headphones when trying live speech with media playback. Stop and retry if browser audio is mistaken for your command.
 
@@ -97,7 +102,7 @@ npm run build:mac
 
 Core tests cover payload preservation, safe URLs, confidence handling, action confirmation, cancellation, encrypted settings, and actual Google request serialization. Real headless Chrome tests cover page extraction, Sinhala form text, sensitive-field omission, stale targets, practice navigation, and tabs. Desktop tests launch Electron and exercise the interface with isolated temporary settings, including automated WCAG A/AA checks on Home, Reader, and Connections; screenshots are saved in `artifacts/`. These automated checks do not replace testing with blind users.
 
-During the initial build, a live anonymous YouTube search also successfully produced linked reading results. Google STT/TTS, Gemini, and Jev live calls have not yet been validated with user credentials.
+Reader regression tests use local fixtures for YouTube title layouts, AJAX replacement/appends, infinite scrolling, pagination, and cancellation. UI tests use simulated audio and isolated settings, without microphone recording or paid service requests. Live speech quality and unusual website layouts still need testing with users.
 
 `npm run build:mac` creates an app in `dist/`. `npm run dist:mac` creates a disk image. Local builds are unsigned/ad hoc unless a developer signing identity is configured. Notarization and signed distribution are separate release steps. No publishing is performed by these scripts.
 

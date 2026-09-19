@@ -6,6 +6,7 @@ const api = window.svara;
 const $ = selector => document.querySelector(selector);
 let state, settings, currentView = 'home', tabs = [];
 let audio = null, audioUrl = '', playback = 0, activeResolve = null, noticeTimer;
+let navigation = Promise.resolve(), navigationVersion = 0;
 const shortcutEditor = createShortcutEditor({ api, saved: fillSettings, activate: () => view('home'), notice });
 
 function notice(text, error = true) {
@@ -25,6 +26,19 @@ async function view(name) {
   const labels = { home: ['WELCOME TO SVARA', 'Your browser, at your pace.'], reader: ['YOUR BROWSER', 'Find your place. Follow your curiosity.'], settings: ['CONNECTIONS', 'A few details, then you’re ready.'], shortcuts: ['KEYBOARD SHORTCUTS', 'Your keys. Your pace.'], help: ['HELP & COMMANDS', 'You’re in control.'] };
   $('#view-eyebrow').textContent = labels[name][0]; $('#breadcrumb').textContent = labels[name][1];
   $('#main').focus({ preventScroll: true });
+  if (name === 'reader') focusSelected();
+}
+function focusSelected() {
+  const item = $('#reading-list').querySelector(`[data-item-index="${state?.reader.index}"]`);
+  (item || $('#page-title')).focus({ preventScroll: true });
+  item?.scrollIntoView({ block: 'nearest' });
+}
+async function focusReader({ raise = false } = {}) {
+  // Do not discard a connection form or shortcut choice while the browser loads.
+  if (['settings', 'shortcuts'].includes(currentView)) return;
+  if (currentView !== 'reader') await view('reader');
+  focusSelected();
+  if (raise) await attempt(() => api.focusReaderWindow());
 }
 function render(next) {
   state = next;
@@ -36,7 +50,7 @@ function render(next) {
   $('#reader-count').textContent = next.reader.items.length;
   $('#page-title').textContent = next.page?.title || 'No page open yet';
   $('#page-url').textContent = next.practice ? 'Local practice page · fictional content' : next.page?.url || 'Open a website or start with the practice page.';
-  $('#list-count').textContent = `${next.reader.items.length} items`;
+  $('#list-count').textContent = `${next.reader.items.length} items${next.loadingMore ? ' · Looking for more…' : ''}`;
   $('#reader-empty').hidden = next.reader.items.length > 0;
   $('#transcript-line').hidden = !next.transcript;
   $('#transcript-line').textContent = next.english ? `${next.transcript} → ${next.english}` : next.transcript;
@@ -49,13 +63,14 @@ function render(next) {
     list.replaceChildren(...next.reader.items.map((item, index) => {
       const li = document.createElement('li'), button = document.createElement('button');
       button.className = 'item-button'; button.dataset.itemIndex = index;
+      button.tabIndex = index === next.reader.index ? 0 : -1;
       button.setAttribute('aria-current', String(index === next.reader.index));
-      button.setAttribute('aria-label', `Read item ${index + 1}: ${item.text}`);
+      button.setAttribute('aria-label', `${item.targetId ? 'Open' : 'Read'} item ${index + 1}: ${item.text}`);
       const number = document.createElement('span'); number.className = 'item-number'; number.textContent = index + 1;
       const words = document.createElement('span'), title = document.createElement('strong'); title.textContent = item.text; title.lang = item.language || '';
       words.append(title);
       if (item.meta) { const meta = document.createElement('small'); meta.textContent = item.meta; words.append(meta); }
-      button.append(number, words); button.addEventListener('click', () => control('select', index)); li.append(button); return li;
+      button.append(number, words); button.addEventListener('click', () => control(item.targetId ? 'open_item' : 'select', index)); li.append(button); return li;
     }));
     if (focusedIndex !== undefined) list.querySelector(`[data-item-index="${focusedIndex}"]`)?.focus({ preventScroll: true });
   }
@@ -90,6 +105,7 @@ function fillSettings(data) {
   settings = data;
   for (const [selector, key] of Object.entries({ '#project-id': 'projectId', '#region': 'region', '#input-language': 'inputLanguage', '#voice': 'voice', '#guidance-language': 'guidanceLanguage', '#rate': 'rate' })) $(selector).value = data[key];
   $('#speech-enabled').checked = data.speechEnabled;
+  $('#read-on-focus').checked = data.readOnFocus !== false;
   $('#gemini-key').value = ''; $('#typesafe-key').value = '';
   $('#gemini-key').placeholder = data.hasGeminiKey ? 'Saved securely · leave blank to keep' : 'Paste your Gemini API key';
   $('#typesafe-key').placeholder = data.hasTypesafeKey ? 'Saved securely · leave blank to keep' : 'Paste your TypeSafe API key';
@@ -103,7 +119,7 @@ function fillSettings(data) {
     const value = shortcuts.enabled ? shortcuts.bindings[element.dataset.shortcutHint] : '';
     element.textContent = value ? shortcutLabel(value) : 'Shortcut off';
   });
-  for (const [selector, action] of Object.entries({ '#talk': 'speak', '[data-action="next"]': 'next', '[data-action="previous"]': 'previous', '#open-item': 'open' })) {
+  for (const [selector, action] of Object.entries({ '#talk': 'speak', '[data-action="focus_next"]': 'next', '[data-action="focus_previous"]': 'previous', '#open-item': 'open', '#read-selected': 'read', '#stop-all': 'stop' })) {
     const button = $(selector), key = shortcuts.enabled && shortcuts.bindings[action];
     button.title = key ? shortcutLabel(key) : 'Choose a key in Keyboard shortcuts';
   }
@@ -111,12 +127,21 @@ function fillSettings(data) {
 }
 function settingsInput(extra = {}) {
   return { projectId: $('#project-id').value.trim(), region: $('#region').value, inputLanguage: $('#input-language').value,
-    voice: $('#voice').value, guidanceLanguage: $('#guidance-language').value, speechEnabled: $('#speech-enabled').checked,
+    voice: $('#voice').value, guidanceLanguage: $('#guidance-language').value, speechEnabled: $('#speech-enabled').checked, readOnFocus: $('#read-on-focus').checked,
     rate: Number($('#rate').value), geminiKey: $('#gemini-key').value.trim(), typesafeKey: $('#typesafe-key').value.trim(), ...extra };
 }
 async function save(extra = {}) { const result = await api.saveSettings(settingsInput(extra)); fillSettings(result); notice('Connections saved on this Mac.', false); }
 async function control(action, index) {
-  if (action === 'stop') cancelRecording();
+  if (['focus_next', 'focus_previous'].includes(action)) {
+    const version = navigationVersion;
+    navigation = navigation.then(async () => {
+      if (version !== navigationVersion) return;
+      stopPlayback(); await attempt(async () => render(await api.control(action, index)));
+    });
+    return navigation;
+  }
+  navigationVersion++;
+  if (action === 'stop') { navigation = Promise.resolve(); cancelRecording(); }
   stopPlayback();
   await attempt(async () => render(await api.control(action, index)));
 }
@@ -254,16 +279,35 @@ talk.addEventListener('click', event => {
   if (event.detail === 0 && !recording.active) notice('Hold Space or Enter on this button, or hold your speaking shortcut. Release to send.', false);
 });
 $('#stop-all').onclick = () => control('stop');
-for (const id of ['#practice', '#reader-practice']) $(id).onclick = () => attempt(async () => { stopPlayback(); render(await api.startBrowser(true)); view('reader'); });
+for (const id of ['#practice', '#reader-practice']) $(id).onclick = () => attempt(async () => { stopPlayback(); render(await api.startBrowser(true)); await focusReader(); });
 $('#live-mode').onclick = () => attempt(async () => { stopPlayback(); render(await api.startBrowser(false)); });
 $('#show-browser').onclick = () => attempt(() => api.showBrowser());
 $('#rate').oninput = () => { const rate = Number($('#rate').value); $('#rate-value').textContent = rate.toFixed(1) + '×'; if (audio) audio.playbackRate = rate; };
 $('#rate').onchange = () => attempt(async () => { settings = await api.saveSettings(settingsInput()); });
-document.addEventListener('keydown', event => { if (event.key === 'Escape' && currentView !== 'shortcuts') { event.preventDefault(); control('stop'); } });
+$('#read-on-focus').onchange = () => attempt(async () => {
+  const value = $('#read-on-focus').checked;
+  try { settings = await api.readerPreference(value); }
+  catch (error) { $('#read-on-focus').checked = settings.readOnFocus !== false; throw error; }
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && currentView !== 'shortcuts') { event.preventDefault(); control('stop'); return; }
+  if (currentView !== 'reader' || recording.active || state.pending || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  const element = document.activeElement;
+  if (!element?.closest('#reading-list') && !['main', 'page-title'].includes(element?.id)) return;
+  const action = { ArrowDown: 'focus_next', ArrowRight: 'focus_next', ArrowUp: 'focus_previous', ArrowLeft: 'focus_previous', Enter: 'open_current', r: 'repeat', R: 'repeat' }[event.key];
+  if (action) { event.preventDefault(); if (!event.repeat) control(action); }
+});
 api.onState(render); api.onTabs(renderTabs); api.onNarration(speak); api.onStop(stopPlayback);
+api.onNavigationTone(() => { if (settings.speechEnabled && !recording.active) tone(); });
+api.onReaderPosition(({ number, epoch }) => {
+  if (!settings.speechEnabled || recording.active || ['settings', 'shortcuts'].includes(currentView)) return;
+  attempt(() => api.speakPosition(number, epoch));
+});
+api.onReaderFocus(data => { focusReader(data).catch(error => notice(error.message)); });
 api.onNotice(data => { notice(data.text, data.error); if (data.error) tone(220); }); api.onNavigate(view); api.onCancelRecording(cancelRecording);
 api.onShortcut(action => {
   if (currentView === 'shortcuts') return;
+  if (action === 'stop') { control('stop'); return; }
   if (action === 'speak-end') { recording.finish('shortcut'); return; }
   if (action === 'speak-cancel' || action === 'speak-unavailable') {
     cancelRecording();
@@ -271,9 +315,9 @@ api.onShortcut(action => {
     return;
   }
   if (action === 'speak-start') { startRecording('shortcut'); return; }
-  if (!['next', 'previous', 'open'].includes(action)) return;
+  if (!['next', 'previous', 'open', 'read'].includes(action)) return;
   if (recording.active) { notice('Finish speaking before using the reading shortcuts.'); return; }
   if (state.pending) { notice('Confirm or cancel the pending choice before using the reading shortcuts.'); return; }
-  control(action === 'open' ? 'open_current' : action);
+  control({ open: 'open_current', read: 'repeat', next: 'focus_next', previous: 'focus_previous' }[action]);
 });
 await attempt(async () => { await api.editShortcuts(false); const initial = await api.initial(); fillSettings(initial.settings); render(initial.state); renderTabs(initial.tabs); if (initial.shortcutWarning) notice(initial.shortcutWarning); });
