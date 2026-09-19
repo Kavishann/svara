@@ -1,4 +1,4 @@
-import { readdir } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 async function check(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -8,4 +8,10 @@ async function check(directory) {
   }
 }
 await check('src'); await check('scripts'); await check('test');
-console.log('All JavaScript files passed syntax checks.');
+for (const line of (await readFile('.env.example', 'utf8')).split('\n')) {
+  const assignment = line.match(/^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
+  if (assignment && !['', '""', "''"].includes(assignment[2])) {
+    throw new Error(`Keep ${assignment[1]} empty in .env.example. Save personal credentials in Svara Connections or an ignored local .env file.`);
+  }
+}
+console.log('All JavaScript files passed syntax checks. Example environment values are empty.');

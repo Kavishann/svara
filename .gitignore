@@ -8,6 +8,14 @@ artifacts/
 .DS_Store
 credentials*.json
 service-account*.json
+credentials/
+secrets/
+settings.json
+settings.json.tmp
+*.pem
+*.key
+*.p12
+*.pfx
 coverage/
 build/native/
 build/native-tests/
