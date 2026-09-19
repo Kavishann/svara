@@ -37,6 +37,12 @@ function handle(name, fn) {
 app.whenReady().then(async () => {
 settings = new Settings(app.getPath('userData'), safeStorage); await settings.load();
 const google = new GoogleServices(() => settings.data);
+let cloudSpeech = null;
+const stopCloudSpeech = id => {
+  if (cloudSpeech && (id === undefined || cloudSpeech.id === id)) {
+    cloudSpeech.controller.abort(); cloudSpeech = null;
+  }
+};
 const nativeDirectory = app.isPackaged ? path.join(process.resourcesPath, 'native') : path.join(root, '../build/native');
 const languageDetector = createRequire(import.meta.url)(path.join(nativeDirectory, 'language.node'));
 const localReading = new LocalReading();
@@ -56,8 +62,8 @@ browser = new BrowserController({ directory: app.getPath('userData'), headless: 
 const jev = new JevService(() => settings.data);
 engine = new Engine({ browser, google, jev, settings: () => settings.data });
 positionSpeech.onFailure = () => send('navigation-tone');
-engine.on('stop', () => { positionSpeech.stop(); localReading.stop(); });
-engine.on('narration', () => { positionSpeech.stop(); localReading.stop(); });
+engine.on('stop', () => { positionSpeech.stop(); localReading.stop(); stopCloudSpeech(); });
+engine.on('narration', () => { positionSpeech.stop(); localReading.stop(); stopCloudSpeech(); });
 const releaseModule = app.isPackaged ? path.join(process.resourcesPath, 'native/key-release.node') : path.join(root, '../build/native/key-release.node');
 const watchRelease = createReleaseWatcher(createRequire(import.meta.url)(releaseModule));
 const shortcuts = new ShortcutManager(globalShortcut, action => {
@@ -82,9 +88,14 @@ window.webContents.on('will-navigate', event => event.preventDefault());
 window.webContents.on('will-attach-webview', event => event.preventDefault());
 
 handle('initial', async () => ({ state: engine.view(), settings: settings.public(), tabs: await browser.tabs(), version: app.getVersion(), shortcutWarning }));
-handle('settings-save', input => {
+handle('settings-save', async input => {
   if (input && Object.hasOwn(input, 'shortcuts')) throw new Error('Save keyboard choices from Keyboard shortcuts.');
-  return settings.save(input);
+  const before = settings.data;
+  const result = await settings.save(input);
+  if (input.clearKeys || ['projectId', 'voice', 'geminiKey', 'speechEnabled'].some(key => before[key] !== settings.data[key])) {
+    engine.stop(); google.clearSpeechCache();
+  }
+  return result;
 });
 handle('shortcuts-save', async input => {
   const result = await shortcuts.save(input, next => settings.saveShortcuts(next));
@@ -93,7 +104,7 @@ handle('shortcuts-save', async input => {
 handle('shortcuts-editing', value => {
   if (typeof value !== 'boolean') throw new Error('Choose a shortcut setting.');
   shortcuts.setEditing(value);
-  if (value) { positionSpeech.stop(); localReading.stop(); }
+  if (value) { positionSpeech.stop(); localReading.stop(); stopCloudSpeech(); }
 });
 handle('credentials-file', async () => {
   const result = await dialog.showOpenDialog(window, { title: 'Choose Google Cloud credentials', properties: ['openFile'], filters: [{ name: 'Google service account JSON', extensions: ['json'] }] });
@@ -103,7 +114,8 @@ handle('credentials-file', async () => {
   if (stat.size > 50000) throw new Error('Choose a Google service account credential file.');
   const parsed = JSON.parse(await fs.readFile(file, 'utf8'));
   if (parsed.type !== 'service_account' || !parsed.client_email || !parsed.private_key) throw new Error('This file is not a Google service account credential file.');
-  return settings.setCredentialFile(file);
+  const resultSettings = await settings.setCredentialFile(file);
+  engine.stop(); google.clearSpeechCache(); return resultSettings;
 });
 handle('connections-check', async () => {
   const [googleResults, jevResult] = await Promise.all([google.check(), jev.check()]);
@@ -147,11 +159,26 @@ handle('audio', data => {
   if (!(data instanceof Uint8Array) || data.length > 10 * 1024 * 1024) throw new Error('The recording is too large. Use a short command.');
   return engine.audio(Buffer.from(data));
 });
-handle('synthesize', async ({ text, language, epoch }) => {
-  if (typeof text !== 'string' || typeof language !== 'string' || language.length > 35 || epoch !== engine.epoch) throw new Error('Reading was cancelled.');
-  if (browser.practice || !settings.data.speechEnabled) return null;
-  const audio = await google.synthesize(text, language); engine.current(epoch); return audio;
+handle('speech-stream', async ({ id, text, language, epoch }) => {
+  if (typeof id !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(id) || typeof text !== 'string'
+    || typeof language !== 'string' || language.length > 35) throw new Error('That reading request is not valid.');
+  engine.current(epoch);
+  if (browser.practice || !settings.data.speechEnabled) return { completed: false };
+  stopCloudSpeech(); positionSpeech.stop();
+  const job = { id, controller: new AbortController() }; cloudSpeech = job;
+  try {
+    const result = await google.streamSpeech(text, language, { signal: job.controller.signal, onChunk: chunk => {
+      engine.current(epoch); job.controller.signal.throwIfAborted();
+      if (cloudSpeech === job) send('speech-chunk', { id, chunk: new Uint8Array(chunk) });
+    } });
+    engine.current(epoch); job.controller.signal.throwIfAborted();
+    return { completed: true, ...result };
+  } catch (error) {
+    if (job.controller.signal.aborted || error.name === 'AbortError') return { completed: false };
+    throw error;
+  } finally { if (cloudSpeech === job) cloudSpeech = null; }
 });
+handle('speech-stream-stop', id => { if (typeof id === 'string' && id.length <= 80) stopCloudSpeech(id); });
 handle('speech-route', ({ text, language, epoch }) => { engine.current(epoch); return routeSpeech(text, language); });
 handle('speak-local', async ({ text, language, epoch }) => {
   engine.current(epoch);
@@ -179,7 +206,8 @@ if (!globalShortcut.register(STOP_SHORTCUT, () => { engine.stop(); send('cancel-
   shortcutWarning += ' The stop shortcut is unavailable. Escape still stops reading inside Svara.';
 }
 watchRelease.refresh();
-window.webContents.on('render-process-gone', () => { positionSpeech.stop(); localReading.stop(); shortcuts.cancelHold(); shortcuts.setEditing(false); });
+window.webContents.on('did-start-loading', () => { positionSpeech.stop(); localReading.stop(); stopCloudSpeech(); });
+window.webContents.on('render-process-gone', () => { positionSpeech.stop(); localReading.stop(); stopCloudSpeech(); shortcuts.cancelHold(); shortcuts.setEditing(false); });
 await window.loadFile(rendererFile);
 app.on('activate', () => { if (window && !window.isDestroyed()) window.show(); });
 app.on('window-all-closed', () => app.quit());
@@ -187,7 +215,7 @@ app.on('before-quit', event => {
   globalShortcut.unregisterAll();
   shortcuts.cancelHold();
   watchRelease.close();
-  if (!quitting) { event.preventDefault(); quitting = true; engine.stop(); browser.close().finally(() => app.quit()); }
+  if (!quitting) { event.preventDefault(); quitting = true; engine.stop(); google.clearSpeechCache(); browser.close().finally(() => app.quit()); }
 });
 }).catch(error => {
   dialog.showErrorBox('Svara could not start', String(error.message || 'Please restart the app.'));

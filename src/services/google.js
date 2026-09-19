@@ -3,6 +3,7 @@ import speech from '@google-cloud/speech';
 import tts from '@google-cloud/text-to-speech';
 import { validateTranslation } from '../core/policy.js';
 import { ServiceError, serviceError, withService } from './errors.js';
+import { SessionAudioCache, streamSpeech } from './speech-stream.js';
 
 export const TRANSLATION_MODEL = 'gemini-3.8-flash';
 export const SPEECH_MODEL = 'gemini-2.5-flash-tts';
@@ -40,7 +41,7 @@ export function synthesisRequest(text, language, voice = 'Kore') {
 }
 
 export class GoogleServices {
-  constructor(getSettings) { this.getSettings = getSettings; this.clients = new Map(); }
+  constructor(getSettings) { this.getSettings = getSettings; this.clients = new Map(); this.speechCache = new SessionAudioCache(); }
   options() {
     const s = this.getSettings();
     return { projectId: s.projectId || undefined, ...(s.credentialsPath ? { keyFilename: s.credentialsPath } : {}) };
@@ -102,6 +103,13 @@ export class GoogleServices {
     const [response] = await withService('tts', () => this.client('tts').synthesizeSpeech(request, { timeout: 30000 }));
     if (!response.audioContent?.length) throw new Error('Google returned no audio. Try reading this item again.');
     return Buffer.from(response.audioContent).toString('base64');
+  }
+  clearSpeechCache() { this.speechCache.clear(); }
+  async streamSpeech(text, language, { signal, onChunk }) {
+    const s = this.getSettings();
+    const request = synthesisRequest(text, language, s.voice);
+    return withService('tts', () => streamSpeech({ client: this.client('tts'), request,
+      scope: [s.projectId, s.credentialsPath], cache: this.speechCache, signal, onChunk }));
   }
   async check() {
     const s = this.getSettings();

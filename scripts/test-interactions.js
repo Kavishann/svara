@@ -81,22 +81,42 @@ export async function testInteractions(app, window) {
   await app.evaluate(({ ipcMain, BrowserWindow }) => {
     const contents = BrowserWindow.getAllWindows()[0].webContents, send = contents.send.bind(contents);
     contents.send = (channel, data) => send(channel, channel === 'narration' ? { ...data, practice: false } : data);
-    ipcMain.removeHandler('synthesize');
-    ipcMain.handle('synthesize', (_event, request) => {
+    globalThis.svaraStreamTest = { manual: false, jobs: new Map(), waiting: [], cancelled: 0 };
+    ipcMain.removeHandler('speech-stream');
+    ipcMain.handle('speech-stream', async (_event, request) => {
       globalThis.svaraInteractionTest.synthesized.push(request.text);
       globalThis.svaraInteractionTest.spoken.push(request.text);
-      return { ok: true, value: 'AA==' };
+      return new Promise(resolve => {
+        const sendChunk = () => contents.send('speech-chunk', { id: request.id, chunk: new Uint8Array(480) });
+        const finish = () => { globalThis.svaraStreamTest.jobs.delete(request.id); resolve({ ok: true, value: { completed: true } }); };
+        globalThis.svaraStreamTest.jobs.set(request.id, () => resolve({ ok: true, value: { completed: false } }));
+        sendChunk();
+        if (globalThis.svaraStreamTest.manual) globalThis.svaraStreamTest.waiting.push(() => { sendChunk(); finish(); });
+        else setTimeout(() => { sendChunk(); finish(); }, 40);
+      });
+    });
+    ipcMain.removeHandler('speech-stream-stop');
+    ipcMain.handle('speech-stream-stop', (_event, id) => {
+      const cancel = globalThis.svaraStreamTest.jobs.get(id);
+      if (cancel) { globalThis.svaraStreamTest.cancelled++; globalThis.svaraStreamTest.jobs.delete(id); cancel(); }
+      return { ok: true };
     });
   });
   await window.evaluate(() => {
-    window.svaraFakePlayback = { automatic: true, waiting: [] };
-    window.Audio = class {
-      async play() {
-        const done = () => this.onended?.();
-        if (window.svaraFakePlayback.automatic) setTimeout(done, 10);
-        else window.svaraFakePlayback.waiting.push(done);
+    window.svaraFakePlayback = { automatic: true, waiting: [], started: 0, stopped: 0 };
+    const NativeAudioContext = window.AudioContext;
+    window.AudioContext = class extends NativeAudioContext {
+      createBufferSource() {
+        return { playbackRate: {}, connect() {}, disconnect() {},
+          start() {
+            window.svaraFakePlayback.started++;
+            const done = () => this.onended?.();
+            if (window.svaraFakePlayback.automatic) setTimeout(done, 10);
+            else window.svaraFakePlayback.waiting.push(done);
+          },
+          stop() { window.svaraFakePlayback.stopped++; }
+        };
       }
-      pause() {}
     };
   });
   await window.getByRole('button', { name: /^Page reader/ }).click();
@@ -129,5 +149,20 @@ export async function testInteractions(app, window) {
   await window.evaluate(() => { window.svaraFakePlayback.waiting.forEach(done => done()); });
   assert.equal((await app.evaluate(() => globalThis.svaraInteractionTest.spoken)).length, 1);
   assert.match(await window.locator('#position').textContent(), /^1 \//);
-  console.log('Hold/release, repeat suppression, Escape, button keyboard/mouse release, five-item playback cap with continuous enabled, and playback interruption passed with simulated audio.');
+  // The first cloud chunk must start playback while the provider is still open.
+  await window.locator('#continuous').uncheck();
+  await window.evaluate(() => { window.svaraFakePlayback.started = 0; window.svaraFakePlayback.stopped = 0; });
+  await app.evaluate(() => { globalThis.svaraStreamTest.manual = true; });
+  await window.evaluate(() => window.svara.control('help'));
+  await window.waitForFunction(() => window.svaraFakePlayback.started === 1);
+  assert.equal(await app.evaluate(() => globalThis.svaraStreamTest.jobs.size), 1, 'Playback begins before synthesis completes');
+  await window.locator('#stop-all').click();
+  await window.waitForFunction(() => document.querySelector('#speaking-indicator').hidden);
+  assert.equal(await window.evaluate(() => window.svaraFakePlayback.stopped), 1);
+  assert.ok(await app.evaluate(() => globalThis.svaraStreamTest.cancelled) > 0);
+  await app.evaluate(() => { globalThis.svaraStreamTest.waiting.forEach(done => done()); });
+  await window.evaluate(() => { window.svaraFakePlayback.waiting.forEach(done => done()); });
+  assert.equal(await window.evaluate(() => window.svaraFakePlayback.started), 1, 'Late chunks after Stop cannot play');
+  assert.match(await window.locator('#position').textContent(), /^1 \//);
+  console.log('Hold/release, repeat suppression, five-item playback cap, streaming before completion, and immediate cancellation passed with simulated audio.');
 }

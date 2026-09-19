@@ -2,10 +2,11 @@ import { splitForSpeech, speechLocale } from './audio.js';
 import { DEFAULT_SHORTCUTS, shortcutLabel } from '../core/shortcuts.js';
 import { createShortcutEditor } from './shortcuts.js';
 import { HoldRecorder } from './recording.js';
+import { PcmPlayer } from './pcm-player.js';
 const api = window.svara;
 const $ = selector => document.querySelector(selector);
 let state, settings, currentView = 'home', tabs = [];
-let audio = null, audioUrl = '', playback = 0, activeResolve = null, noticeTimer;
+let cloudPlayback = null, playback = 0, noticeTimer;
 let navigation = Promise.resolve(), navigationVersion = 0;
 const shortcutEditor = createShortcutEditor({ api, saved: fillSettings, activate: () => view('home'), notice });
 
@@ -148,10 +149,30 @@ async function control(action, index) {
 function stopPlayback() {
   playback++;
   api.stopLocalSpeech().catch(() => {});
-  if (audio) { audio.pause(); audio.src = ''; audio = null; }
-  if (audioUrl) { URL.revokeObjectURL(audioUrl); audioUrl = ''; }
-  if (activeResolve) { activeResolve(); activeResolve = null; }
+  if (cloudPlayback) {
+    cloudPlayback.player.stop(); api.stopSpeechStream(cloudPlayback.id).catch(() => {}); cloudPlayback = null;
+  }
   $('#speaking-indicator').hidden = true;
+}
+api.onSpeechChunk(({ id, chunk }) => {
+  if (cloudPlayback?.id === id) cloudPlayback.player.push(chunk);
+});
+async function playCloudPassage(text, language, epoch, token) {
+  const job = { id: crypto.randomUUID(), player: new PcmPlayer({ rate: Number($('#rate').value) }) };
+  cloudPlayback = job;
+  try {
+    await job.player.start();
+    if (token !== playback) return false;
+    const synthesis = api.streamSpeech({ id: job.id, text, language, epoch }).then(result => {
+      if (result.completed) job.player.finish(); else job.player.stop();
+      return result;
+    });
+    const [result, completed] = await Promise.all([synthesis, job.player.done]);
+    return result.completed && completed && token === playback;
+  } finally {
+    job.player.stop(); api.stopSpeechStream(job.id).catch(() => {});
+    if (cloudPlayback === job) cloudPlayback = null;
+  }
 }
 async function speak(request) {
   stopPlayback();
@@ -168,18 +189,8 @@ async function speak(request) {
       if (request.practice) return;
       for (const text of splitForSpeech(request.text)) {
         if (token !== playback) return;
-        const base64 = await api.synthesize({ text, language: speechLocale(route.language, text), epoch: request.epoch });
-        if (!base64 || token !== playback) return;
-        const bytes = Uint8Array.from(atob(base64), char => char.charCodeAt(0));
-        audioUrl = URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' })); audio = new Audio(audioUrl);
-        audio.playbackRate = Number($('#rate').value);
         $('#speaking-indicator').hidden = false;
-        await new Promise((resolve, reject) => {
-          activeResolve = resolve; audio.onended = resolve; audio.onerror = () => reject(new Error('The audio could not be played. Try reading the item again.'));
-          audio.play().catch(reject);
-        });
-        if (token !== playback) return;
-        URL.revokeObjectURL(audioUrl); audioUrl = ''; audio = null; activeResolve = null;
+        if (!await playCloudPassage(text, speechLocale(route.language, text), request.epoch, token)) return;
       }
     }
     $('#speaking-indicator').hidden = true;
@@ -292,7 +303,7 @@ $('#stop-all').onclick = () => control('stop');
 for (const id of ['#practice', '#reader-practice']) $(id).onclick = () => attempt(async () => { stopPlayback(); render(await api.startBrowser(true)); await focusReader(); });
 $('#live-mode').onclick = () => attempt(async () => { stopPlayback(); render(await api.startBrowser(false)); });
 $('#show-browser').onclick = () => attempt(() => api.showBrowser());
-$('#rate').oninput = () => { const rate = Number($('#rate').value); $('#rate-value').textContent = rate.toFixed(1) + '×'; if (audio) audio.playbackRate = rate; };
+$('#rate').oninput = () => { const rate = Number($('#rate').value); $('#rate-value').textContent = rate.toFixed(1) + '×'; };
 $('#rate').onchange = () => attempt(async () => { settings = await api.saveSettings(settingsInput()); });
 $('#read-on-focus').onchange = () => attempt(async () => {
   const value = $('#read-on-focus').checked;

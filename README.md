@@ -57,7 +57,7 @@ API keys are encrypted with Electron `safeStorage` backed by macOS secure storag
 | Translate selected passage | Read this in Sinhala; Read the original switches back |
 | Read five options | **Read first 5**, or say “read first five” / “මුල් පහ කියවන්න”. Reads from item 1 to at most item 5, then stops, even if continuous reading is enabled. |
 | Continue automatically | Keep reading the next item |
-| Change speaking speed | Speed slider; implemented in audio playback |
+| Change speaking speed | Speed slider; applies to the next reading passage |
 | Configure keyboard shortcuts | **Keyboard shortcuts** in the sidebar, or **Command + K** in Svara |
 
 Each new page or active tab brings Page Reader forward and selects its first title. YouTube Results contain video titles without channel names, view counts, or durations. Other pages prefer linked headings, then headings or readable text. “Read titles as I move” is off by default; moving announces just the item number using Apple speech, with no translation, internet connection, or API request. Enable the switch to read full titles instead. Rapid moves replace the previous number; Stop, Read item, and starting a recording interrupt it. A short tone is used if local speech is unavailable. Page updates preserve the selected link when it is still present. Svara leaves Connections and Keyboard shortcuts open while you edit them.
@@ -85,7 +85,8 @@ English reading is detected locally from the actual text, including on pages who
 - The renderer has no Node.js access. IPC checks the calling window and frame. Navigation and remote windows from the app UI are blocked; browsing happens in a separate sandboxed browser process.
 - Raw recordings and command transcripts are kept in memory, not saved by Svara. Chrome maintains its separate browser profile. Cloud providers apply their own retention policies.
 - Original-language reading is the default. Sinhala translation applies to the selected reading mode until “read original” is used.
-- Speech requests are split into small UTF-8-bounded passages, then played in sequence. This version uses synchronous Cloud TTS per passage, with immediate local interruption; it does not yet stream audio bytes while a passage is generated.
+- Speech requests are split into small UTF-8-bounded passages, then played in sequence. Gemini 2.5 Flash TTS streams 24 kHz PCM audio, which starts playing before the passage finishes generating. Stop immediately drops queued playback and cancels unfinished speech requests. First-five reading advances only after the current item's audio finishes playing.
+- Completed cloud audio is reused in memory during the app session, keyed by exact text, language, voice, model, and Google connection. The cache holds at most 120 passages / 24 MiB and removes older entries as needed. Interrupted or failed generation is not cached. Changing the voice or connection clears the cache; quitting clears all cached audio. A first reading still waits for Google's first audio, and requested translation is a separate step.
 
 ## Current limitations
 
@@ -106,7 +107,7 @@ npm run build:mac
 
 Core tests cover payload preservation, safe URLs, confidence handling, action confirmation, cancellation, encrypted settings, and actual Google request serialization. Real headless Chrome tests cover page extraction, Sinhala form text, sensitive-field omission, stale targets, practice navigation, and tabs. Desktop tests launch Electron and exercise the interface with isolated temporary settings, including automated WCAG A/AA checks on Home, Reader, and Connections; screenshots are saved in `artifacts/`. These automated checks do not replace testing with blind users.
 
-Reader regression tests use local fixtures for YouTube title layouts, AJAX replacement/appends, infinite scrolling, pagination, and cancellation. UI tests use simulated audio and isolated settings, without microphone recording or paid service requests. Live speech quality and unusual website layouts still need testing with users.
+Reader regression tests use local fixtures for YouTube title layouts, AJAX replacement/appends, infinite scrolling, pagination, and cancellation. Speech tests cover streamed PCM before completion, chunk boundaries, session reuse, bounded cache eviction, cancellation, late chunks, and first-five playback completion. UI tests use simulated audio and isolated settings, without microphone recording or paid service requests. Live speech quality and unusual website layouts still need testing with users.
 
 `npm run build:mac` creates an app in `dist/`. `npm run dist:mac` creates a disk image. Local builds are unsigned/ad hoc unless a developer signing identity is configured. Notarization and signed distribution are separate release steps. No publishing is performed by these scripts.
 
